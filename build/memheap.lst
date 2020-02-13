@@ -1,0 +1,2049 @@
+ARM GAS  /tmp/cc1FmEdk.s 			page 1
+
+
+   1              		.syntax unified
+   2              		.cpu cortex-m3
+   3              		.fpu softvfp
+   4              		.eabi_attribute 20, 1
+   5              		.eabi_attribute 21, 1
+   6              		.eabi_attribute 23, 3
+   7              		.eabi_attribute 24, 1
+   8              		.eabi_attribute 25, 1
+   9              		.eabi_attribute 26, 1
+  10              		.eabi_attribute 30, 1
+  11              		.eabi_attribute 34, 1
+  12              		.eabi_attribute 18, 4
+  13              		.thumb
+  14              		.syntax unified
+  15              		.file	"memheap.c"
+  16              		.text
+  17              	.Ltext0:
+  18              		.cfi_sections	.debug_frame
+  19              		.section	.text.rt_memheap_init,"ax",%progbits
+  20              		.align	2
+  21              		.global	rt_memheap_init
+  22              		.thumb
+  23              		.thumb_func
+  25              	rt_memheap_init:
+  26              	.LFB15:
+  27              		.file 1 "rt_thread/src/memheap.c"
+   1:rt_thread/src/memheap.c **** /*
+   2:rt_thread/src/memheap.c ****  * Copyright (c) 2006-2018, RT-Thread Development Team
+   3:rt_thread/src/memheap.c ****  *
+   4:rt_thread/src/memheap.c ****  * SPDX-License-Identifier: Apache-2.0
+   5:rt_thread/src/memheap.c ****  */
+   6:rt_thread/src/memheap.c **** 
+   7:rt_thread/src/memheap.c **** /*
+   8:rt_thread/src/memheap.c ****  * File      : memheap.c
+   9:rt_thread/src/memheap.c ****  *
+  10:rt_thread/src/memheap.c ****  * Change Logs:
+  11:rt_thread/src/memheap.c ****  * Date           Author       Notes
+  12:rt_thread/src/memheap.c ****  * 2012-04-10     Bernard      first implementation
+  13:rt_thread/src/memheap.c ****  * 2012-10-16     Bernard      add the mutex lock for heap object.
+  14:rt_thread/src/memheap.c ****  * 2012-12-29     Bernard      memheap can be used as system heap.
+  15:rt_thread/src/memheap.c ****  *                             change mutex lock to semaphore lock.
+  16:rt_thread/src/memheap.c ****  * 2013-04-10     Bernard      add rt_memheap_realloc function.
+  17:rt_thread/src/memheap.c ****  * 2013-05-24     Bernard      fix the rt_memheap_realloc issue.
+  18:rt_thread/src/memheap.c ****  * 2013-07-11     Grissiom     fix the memory block splitting issue.
+  19:rt_thread/src/memheap.c ****  * 2013-07-15     Grissiom     optimize rt_memheap_realloc
+  20:rt_thread/src/memheap.c ****  */
+  21:rt_thread/src/memheap.c **** 
+  22:rt_thread/src/memheap.c **** #include <rthw.h>
+  23:rt_thread/src/memheap.c **** #include <rtthread.h>
+  24:rt_thread/src/memheap.c **** 
+  25:rt_thread/src/memheap.c **** #ifdef RT_USING_MEMHEAP
+  26:rt_thread/src/memheap.c **** 
+  27:rt_thread/src/memheap.c **** /* dynamic pool magic and mask */
+  28:rt_thread/src/memheap.c **** #define RT_MEMHEAP_MAGIC        0x1ea01ea0
+  29:rt_thread/src/memheap.c **** #define RT_MEMHEAP_MASK         0xfffffffe
+  30:rt_thread/src/memheap.c **** #define RT_MEMHEAP_USED         0x01
+  31:rt_thread/src/memheap.c **** #define RT_MEMHEAP_FREED        0x00
+ARM GAS  /tmp/cc1FmEdk.s 			page 2
+
+
+  32:rt_thread/src/memheap.c **** 
+  33:rt_thread/src/memheap.c **** #define RT_MEMHEAP_IS_USED(i)   ((i)->magic & RT_MEMHEAP_USED)
+  34:rt_thread/src/memheap.c **** #define RT_MEMHEAP_MINIALLOC    12
+  35:rt_thread/src/memheap.c **** 
+  36:rt_thread/src/memheap.c **** #define RT_MEMHEAP_SIZE         RT_ALIGN(sizeof(struct rt_memheap_item), RT_ALIGN_SIZE)
+  37:rt_thread/src/memheap.c **** #define MEMITEM_SIZE(item)      ((rt_ubase_t)item->next - (rt_ubase_t)item - RT_MEMHEAP_SIZE)
+  38:rt_thread/src/memheap.c **** 
+  39:rt_thread/src/memheap.c **** /*
+  40:rt_thread/src/memheap.c ****  * The initialized memory pool will be:
+  41:rt_thread/src/memheap.c ****  * +-----------------------------------+--------------------------+
+  42:rt_thread/src/memheap.c ****  * | whole freed memory block          | Used Memory Block Tailer |
+  43:rt_thread/src/memheap.c ****  * +-----------------------------------+--------------------------+
+  44:rt_thread/src/memheap.c ****  *
+  45:rt_thread/src/memheap.c ****  * block_list --> whole freed memory block
+  46:rt_thread/src/memheap.c ****  *
+  47:rt_thread/src/memheap.c ****  * The length of Used Memory Block Tailer is 0,
+  48:rt_thread/src/memheap.c ****  * which is prevents block merging across list
+  49:rt_thread/src/memheap.c ****  */
+  50:rt_thread/src/memheap.c **** rt_err_t rt_memheap_init(struct rt_memheap *memheap,
+  51:rt_thread/src/memheap.c ****                          const char        *name,
+  52:rt_thread/src/memheap.c ****                          void              *start_addr,
+  53:rt_thread/src/memheap.c ****                          rt_size_t         size)
+  54:rt_thread/src/memheap.c **** {
+  28              		.loc 1 54 0
+  29              		.cfi_startproc
+  30              		@ args = 0, pretend = 0, frame = 0
+  31              		@ frame_needed = 0, uses_anonymous_args = 0
+  32              	.LVL0:
+  33 0000 F8B5     		push	{r3, r4, r5, r6, r7, lr}
+  34              	.LCFI0:
+  35              		.cfi_def_cfa_offset 24
+  36              		.cfi_offset 3, -24
+  37              		.cfi_offset 4, -20
+  38              		.cfi_offset 5, -16
+  39              		.cfi_offset 6, -12
+  40              		.cfi_offset 7, -8
+  41              		.cfi_offset 14, -4
+  42 0002 0F46     		mov	r7, r1
+  43 0004 1546     		mov	r5, r2
+  44 0006 1E46     		mov	r6, r3
+  55:rt_thread/src/memheap.c ****     struct rt_memheap_item *item;
+  56:rt_thread/src/memheap.c **** 
+  57:rt_thread/src/memheap.c ****     RT_ASSERT(memheap != RT_NULL);
+  45              		.loc 1 57 0
+  46 0008 0446     		mov	r4, r0
+  47 000a 20B9     		cbnz	r0, .L2
+  48              		.loc 1 57 0 is_stmt 0 discriminator 1
+  49 000c 3922     		movs	r2, #57
+  50              	.LVL1:
+  51 000e 2149     		ldr	r1, .L4
+  52              	.LVL2:
+  53 0010 2148     		ldr	r0, .L4+4
+  54              	.LVL3:
+  55 0012 FFF7FEFF 		bl	rt_assert_handler
+  56              	.LVL4:
+  57              	.L2:
+  58:rt_thread/src/memheap.c **** 
+ARM GAS  /tmp/cc1FmEdk.s 			page 3
+
+
+  59:rt_thread/src/memheap.c ****     /* initialize pool object */
+  60:rt_thread/src/memheap.c ****     rt_object_init(&(memheap->parent), RT_Object_Class_MemHeap, name);
+  58              		.loc 1 60 0 is_stmt 1
+  59 0016 3A46     		mov	r2, r7
+  60 0018 0721     		movs	r1, #7
+  61 001a 2046     		mov	r0, r4
+  62 001c FFF7FEFF 		bl	rt_object_init
+  63              	.LVL5:
+  61:rt_thread/src/memheap.c **** 
+  62:rt_thread/src/memheap.c ****     memheap->start_addr     = start_addr;
+  64              		.loc 1 62 0
+  65 0020 6561     		str	r5, [r4, #20]
+  63:rt_thread/src/memheap.c ****     memheap->pool_size      = RT_ALIGN_DOWN(size, RT_ALIGN_SIZE);
+  66              		.loc 1 63 0
+  67 0022 26F00303 		bic	r3, r6, #3
+  68 0026 A361     		str	r3, [r4, #24]
+  64:rt_thread/src/memheap.c ****     memheap->available_size = memheap->pool_size - (2 * RT_MEMHEAP_SIZE);
+  69              		.loc 1 64 0
+  70 0028 303B     		subs	r3, r3, #48
+  71 002a E361     		str	r3, [r4, #28]
+  65:rt_thread/src/memheap.c ****     memheap->max_used_size  = memheap->pool_size - memheap->available_size;
+  72              		.loc 1 65 0
+  73 002c 3023     		movs	r3, #48
+  74 002e 2362     		str	r3, [r4, #32]
+  66:rt_thread/src/memheap.c **** 
+  67:rt_thread/src/memheap.c ****     /* initialize the free list header */
+  68:rt_thread/src/memheap.c ****     item            = &(memheap->free_header);
+  75              		.loc 1 68 0
+  76 0030 04F12C03 		add	r3, r4, #44
+  77              	.LVL6:
+  69:rt_thread/src/memheap.c ****     item->magic     = RT_MEMHEAP_MAGIC;
+  78              		.loc 1 69 0
+  79 0034 194A     		ldr	r2, .L4+8
+  80 0036 E262     		str	r2, [r4, #44]
+  70:rt_thread/src/memheap.c ****     item->pool_ptr  = memheap;
+  81              		.loc 1 70 0
+  82 0038 2463     		str	r4, [r4, #48]
+  71:rt_thread/src/memheap.c ****     item->next      = RT_NULL;
+  83              		.loc 1 71 0
+  84 003a 0026     		movs	r6, #0
+  85              	.LVL7:
+  86 003c 6663     		str	r6, [r4, #52]
+  72:rt_thread/src/memheap.c ****     item->prev      = RT_NULL;
+  87              		.loc 1 72 0
+  88 003e A663     		str	r6, [r4, #56]
+  73:rt_thread/src/memheap.c ****     item->next_free = item;
+  89              		.loc 1 73 0
+  90 0040 E363     		str	r3, [r4, #60]
+  74:rt_thread/src/memheap.c ****     item->prev_free = item;
+  91              		.loc 1 74 0
+  92 0042 2364     		str	r3, [r4, #64]
+  75:rt_thread/src/memheap.c **** 
+  76:rt_thread/src/memheap.c ****     /* set the free list to free list header */
+  77:rt_thread/src/memheap.c ****     memheap->free_list = item;
+  93              		.loc 1 77 0
+  94 0044 A362     		str	r3, [r4, #40]
+  95              	.LVL8:
+ARM GAS  /tmp/cc1FmEdk.s 			page 4
+
+
+  78:rt_thread/src/memheap.c **** 
+  79:rt_thread/src/memheap.c ****     /* initialize the first big memory block */
+  80:rt_thread/src/memheap.c ****     item            = (struct rt_memheap_item *)start_addr;
+  81:rt_thread/src/memheap.c ****     item->magic     = RT_MEMHEAP_MAGIC;
+  96              		.loc 1 81 0
+  97 0046 2A60     		str	r2, [r5]
+  98              	.LVL9:
+  82:rt_thread/src/memheap.c ****     item->pool_ptr  = memheap;
+  99              		.loc 1 82 0
+ 100 0048 6C60     		str	r4, [r5, #4]
+  83:rt_thread/src/memheap.c ****     item->next      = RT_NULL;
+ 101              		.loc 1 83 0
+ 102 004a AE60     		str	r6, [r5, #8]
+  84:rt_thread/src/memheap.c ****     item->prev      = RT_NULL;
+ 103              		.loc 1 84 0
+ 104 004c EE60     		str	r6, [r5, #12]
+  85:rt_thread/src/memheap.c ****     item->next_free = item;
+ 105              		.loc 1 85 0
+ 106 004e 2D61     		str	r5, [r5, #16]
+  86:rt_thread/src/memheap.c ****     item->prev_free = item;
+ 107              		.loc 1 86 0
+ 108 0050 6D61     		str	r5, [r5, #20]
+  87:rt_thread/src/memheap.c **** 
+  88:rt_thread/src/memheap.c ****     item->next = (struct rt_memheap_item *)
+  89:rt_thread/src/memheap.c ****                  ((rt_uint8_t *)item + memheap->available_size + RT_MEMHEAP_SIZE);
+ 109              		.loc 1 89 0
+ 110 0052 E369     		ldr	r3, [r4, #28]
+ 111 0054 1833     		adds	r3, r3, #24
+  88:rt_thread/src/memheap.c ****                  ((rt_uint8_t *)item + memheap->available_size + RT_MEMHEAP_SIZE);
+ 112              		.loc 1 88 0
+ 113 0056 2B44     		add	r3, r3, r5
+ 114 0058 AB60     		str	r3, [r5, #8]
+  90:rt_thread/src/memheap.c ****     item->prev = item->next;
+ 115              		.loc 1 90 0
+ 116 005a EB60     		str	r3, [r5, #12]
+  91:rt_thread/src/memheap.c **** 
+  92:rt_thread/src/memheap.c ****     /* block list header */
+  93:rt_thread/src/memheap.c ****     memheap->block_list = item;
+ 117              		.loc 1 93 0
+ 118 005c 6562     		str	r5, [r4, #36]
+  94:rt_thread/src/memheap.c **** 
+  95:rt_thread/src/memheap.c ****     /* place the big memory block to free list */
+  96:rt_thread/src/memheap.c ****     item->next_free = memheap->free_list->next_free;
+ 119              		.loc 1 96 0
+ 120 005e A36A     		ldr	r3, [r4, #40]
+ 121 0060 1B69     		ldr	r3, [r3, #16]
+ 122 0062 2B61     		str	r3, [r5, #16]
+  97:rt_thread/src/memheap.c ****     item->prev_free = memheap->free_list;
+ 123              		.loc 1 97 0
+ 124 0064 A36A     		ldr	r3, [r4, #40]
+ 125 0066 6B61     		str	r3, [r5, #20]
+  98:rt_thread/src/memheap.c ****     memheap->free_list->next_free->prev_free = item;
+ 126              		.loc 1 98 0
+ 127 0068 A36A     		ldr	r3, [r4, #40]
+ 128 006a 1B69     		ldr	r3, [r3, #16]
+ 129 006c 5D61     		str	r5, [r3, #20]
+  99:rt_thread/src/memheap.c ****     memheap->free_list->next_free            = item;
+ARM GAS  /tmp/cc1FmEdk.s 			page 5
+
+
+ 130              		.loc 1 99 0
+ 131 006e A36A     		ldr	r3, [r4, #40]
+ 132 0070 1D61     		str	r5, [r3, #16]
+ 100:rt_thread/src/memheap.c **** 
+ 101:rt_thread/src/memheap.c ****     /* move to the end of memory pool to build a small tailer block,
+ 102:rt_thread/src/memheap.c ****      * which prevents block merging
+ 103:rt_thread/src/memheap.c ****      */
+ 104:rt_thread/src/memheap.c ****     item = item->next;
+ 133              		.loc 1 104 0
+ 134 0072 AB68     		ldr	r3, [r5, #8]
+ 135              	.LVL10:
+ 105:rt_thread/src/memheap.c ****     /* it's a used memory block */
+ 106:rt_thread/src/memheap.c ****     item->magic     = RT_MEMHEAP_MAGIC | RT_MEMHEAP_USED;
+ 136              		.loc 1 106 0
+ 137 0074 0132     		adds	r2, r2, #1
+ 138 0076 1A60     		str	r2, [r3]
+ 107:rt_thread/src/memheap.c ****     item->pool_ptr  = memheap;
+ 139              		.loc 1 107 0
+ 140 0078 5C60     		str	r4, [r3, #4]
+ 108:rt_thread/src/memheap.c ****     item->next      = (struct rt_memheap_item *)start_addr;
+ 141              		.loc 1 108 0
+ 142 007a 9D60     		str	r5, [r3, #8]
+ 109:rt_thread/src/memheap.c ****     item->prev      = (struct rt_memheap_item *)start_addr;
+ 143              		.loc 1 109 0
+ 144 007c DD60     		str	r5, [r3, #12]
+ 110:rt_thread/src/memheap.c ****     /* not in free list */
+ 111:rt_thread/src/memheap.c ****     item->next_free = item->prev_free = RT_NULL;
+ 145              		.loc 1 111 0
+ 146 007e 5E61     		str	r6, [r3, #20]
+ 147 0080 1E61     		str	r6, [r3, #16]
+ 112:rt_thread/src/memheap.c **** 
+ 113:rt_thread/src/memheap.c ****     /* initialize semaphore lock */
+ 114:rt_thread/src/memheap.c ****     rt_sem_init(&(memheap->lock), name, 1, RT_IPC_FLAG_FIFO);
+ 148              		.loc 1 114 0
+ 149 0082 3346     		mov	r3, r6
+ 150              	.LVL11:
+ 151 0084 0122     		movs	r2, #1
+ 152 0086 3946     		mov	r1, r7
+ 153 0088 04F14400 		add	r0, r4, #68
+ 154 008c FFF7FEFF 		bl	rt_sem_init
+ 155              	.LVL12:
+ 115:rt_thread/src/memheap.c **** 
+ 116:rt_thread/src/memheap.c ****     RT_DEBUG_LOG(RT_DEBUG_MEMHEAP,
+ 117:rt_thread/src/memheap.c ****                  ("memory heap: start addr 0x%08x, size %d, free list header 0x%08x\n",
+ 118:rt_thread/src/memheap.c ****                   start_addr, size, &(memheap->free_header)));
+ 119:rt_thread/src/memheap.c **** 
+ 120:rt_thread/src/memheap.c ****     return RT_EOK;
+ 121:rt_thread/src/memheap.c **** }
+ 156              		.loc 1 121 0
+ 157 0090 3046     		mov	r0, r6
+ 158 0092 F8BD     		pop	{r3, r4, r5, r6, r7, pc}
+ 159              	.LVL13:
+ 160              	.L5:
+ 161              		.align	2
+ 162              	.L4:
+ 163 0094 00000000 		.word	.LANCHOR0
+ 164 0098 00000000 		.word	.LC0
+ARM GAS  /tmp/cc1FmEdk.s 			page 6
+
+
+ 165 009c A01EA01E 		.word	513810080
+ 166              		.cfi_endproc
+ 167              	.LFE15:
+ 169              		.section	.text.rt_memheap_detach,"ax",%progbits
+ 170              		.align	2
+ 171              		.global	rt_memheap_detach
+ 172              		.thumb
+ 173              		.thumb_func
+ 175              	rt_memheap_detach:
+ 176              	.LFB16:
+ 122:rt_thread/src/memheap.c **** RTM_EXPORT(rt_memheap_init);
+ 123:rt_thread/src/memheap.c **** 
+ 124:rt_thread/src/memheap.c **** rt_err_t rt_memheap_detach(struct rt_memheap *heap)
+ 125:rt_thread/src/memheap.c **** {
+ 177              		.loc 1 125 0
+ 178              		.cfi_startproc
+ 179              		@ args = 0, pretend = 0, frame = 0
+ 180              		@ frame_needed = 0, uses_anonymous_args = 0
+ 181              	.LVL14:
+ 182 0000 10B5     		push	{r4, lr}
+ 183              	.LCFI1:
+ 184              		.cfi_def_cfa_offset 8
+ 185              		.cfi_offset 4, -8
+ 186              		.cfi_offset 14, -4
+ 126:rt_thread/src/memheap.c ****     RT_ASSERT(heap);
+ 187              		.loc 1 126 0
+ 188 0002 0446     		mov	r4, r0
+ 189 0004 20B9     		cbnz	r0, .L7
+ 190              		.loc 1 126 0 is_stmt 0 discriminator 1
+ 191 0006 7E22     		movs	r2, #126
+ 192 0008 0F49     		ldr	r1, .L11
+ 193 000a 1048     		ldr	r0, .L11+4
+ 194              	.LVL15:
+ 195 000c FFF7FEFF 		bl	rt_assert_handler
+ 196              	.LVL16:
+ 197              	.L7:
+ 127:rt_thread/src/memheap.c ****     RT_ASSERT(rt_object_get_type(&heap->parent) == RT_Object_Class_MemHeap);
+ 198              		.loc 1 127 0 is_stmt 1
+ 199 0010 2046     		mov	r0, r4
+ 200 0012 FFF7FEFF 		bl	rt_object_get_type
+ 201              	.LVL17:
+ 202 0016 0728     		cmp	r0, #7
+ 203 0018 04D0     		beq	.L8
+ 204              		.loc 1 127 0 is_stmt 0 discriminator 1
+ 205 001a 7F22     		movs	r2, #127
+ 206 001c 0A49     		ldr	r1, .L11
+ 207 001e 0C48     		ldr	r0, .L11+8
+ 208 0020 FFF7FEFF 		bl	rt_assert_handler
+ 209              	.LVL18:
+ 210              	.L8:
+ 128:rt_thread/src/memheap.c ****     RT_ASSERT(rt_object_is_systemobject(&heap->parent));
+ 211              		.loc 1 128 0 is_stmt 1
+ 212 0024 2046     		mov	r0, r4
+ 213 0026 FFF7FEFF 		bl	rt_object_is_systemobject
+ 214              	.LVL19:
+ 215 002a 20B9     		cbnz	r0, .L9
+ 216              		.loc 1 128 0 is_stmt 0 discriminator 1
+ARM GAS  /tmp/cc1FmEdk.s 			page 7
+
+
+ 217 002c 8022     		movs	r2, #128
+ 218 002e 0649     		ldr	r1, .L11
+ 219 0030 0848     		ldr	r0, .L11+12
+ 220 0032 FFF7FEFF 		bl	rt_assert_handler
+ 221              	.LVL20:
+ 222              	.L9:
+ 129:rt_thread/src/memheap.c **** 
+ 130:rt_thread/src/memheap.c ****     rt_object_detach(&(heap->lock.parent.parent));
+ 223              		.loc 1 130 0 is_stmt 1
+ 224 0036 04F14400 		add	r0, r4, #68
+ 225 003a FFF7FEFF 		bl	rt_object_detach
+ 226              	.LVL21:
+ 131:rt_thread/src/memheap.c ****     rt_object_detach(&(heap->parent));
+ 227              		.loc 1 131 0
+ 228 003e 2046     		mov	r0, r4
+ 229 0040 FFF7FEFF 		bl	rt_object_detach
+ 230              	.LVL22:
+ 132:rt_thread/src/memheap.c **** 
+ 133:rt_thread/src/memheap.c ****     /* Return a successful completion. */
+ 134:rt_thread/src/memheap.c ****     return RT_EOK;
+ 135:rt_thread/src/memheap.c **** }
+ 231              		.loc 1 135 0
+ 232 0044 0020     		movs	r0, #0
+ 233 0046 10BD     		pop	{r4, pc}
+ 234              	.LVL23:
+ 235              	.L12:
+ 236              		.align	2
+ 237              	.L11:
+ 238 0048 00000000 		.word	.LANCHOR1
+ 239 004c 14000000 		.word	.LC1
+ 240 0050 1C000000 		.word	.LC2
+ 241 0054 5C000000 		.word	.LC3
+ 242              		.cfi_endproc
+ 243              	.LFE16:
+ 245              		.section	.text.rt_memheap_alloc,"ax",%progbits
+ 246              		.align	2
+ 247              		.global	rt_memheap_alloc
+ 248              		.thumb
+ 249              		.thumb_func
+ 251              	rt_memheap_alloc:
+ 252              	.LFB17:
+ 136:rt_thread/src/memheap.c **** RTM_EXPORT(rt_memheap_detach);
+ 137:rt_thread/src/memheap.c **** 
+ 138:rt_thread/src/memheap.c **** void *rt_memheap_alloc(struct rt_memheap *heap, rt_size_t size)
+ 139:rt_thread/src/memheap.c **** {
+ 253              		.loc 1 139 0
+ 254              		.cfi_startproc
+ 255              		@ args = 0, pretend = 0, frame = 0
+ 256              		@ frame_needed = 0, uses_anonymous_args = 0
+ 257              	.LVL24:
+ 258 0000 70B5     		push	{r4, r5, r6, lr}
+ 259              	.LCFI2:
+ 260              		.cfi_def_cfa_offset 16
+ 261              		.cfi_offset 4, -16
+ 262              		.cfi_offset 5, -12
+ 263              		.cfi_offset 6, -8
+ 264              		.cfi_offset 14, -4
+ARM GAS  /tmp/cc1FmEdk.s 			page 8
+
+
+ 265 0002 0C46     		mov	r4, r1
+ 140:rt_thread/src/memheap.c ****     rt_err_t result;
+ 141:rt_thread/src/memheap.c ****     rt_uint32_t free_size;
+ 142:rt_thread/src/memheap.c ****     struct rt_memheap_item *header_ptr;
+ 143:rt_thread/src/memheap.c **** 
+ 144:rt_thread/src/memheap.c ****     RT_ASSERT(heap != RT_NULL);
+ 266              		.loc 1 144 0
+ 267 0004 0646     		mov	r6, r0
+ 268 0006 20B9     		cbnz	r0, .L14
+ 269              		.loc 1 144 0 is_stmt 0 discriminator 1
+ 270 0008 9022     		movs	r2, #144
+ 271 000a 4249     		ldr	r1, .L30
+ 272              	.LVL25:
+ 273 000c 4248     		ldr	r0, .L30+4
+ 274              	.LVL26:
+ 275 000e FFF7FEFF 		bl	rt_assert_handler
+ 276              	.LVL27:
+ 277              	.L14:
+ 145:rt_thread/src/memheap.c ****     RT_ASSERT(rt_object_get_type(&heap->parent) == RT_Object_Class_MemHeap);
+ 278              		.loc 1 145 0 is_stmt 1
+ 279 0012 3046     		mov	r0, r6
+ 280 0014 FFF7FEFF 		bl	rt_object_get_type
+ 281              	.LVL28:
+ 282 0018 0728     		cmp	r0, #7
+ 283 001a 04D0     		beq	.L15
+ 284              		.loc 1 145 0 is_stmt 0 discriminator 1
+ 285 001c 9122     		movs	r2, #145
+ 286 001e 3D49     		ldr	r1, .L30
+ 287 0020 3E48     		ldr	r0, .L30+8
+ 288 0022 FFF7FEFF 		bl	rt_assert_handler
+ 289              	.LVL29:
+ 290              	.L15:
+ 146:rt_thread/src/memheap.c **** 
+ 147:rt_thread/src/memheap.c ****     /* align allocated size */
+ 148:rt_thread/src/memheap.c ****     size = RT_ALIGN(size, RT_ALIGN_SIZE);
+ 291              		.loc 1 148 0 is_stmt 1
+ 292 0026 0334     		adds	r4, r4, #3
+ 293              	.LVL30:
+ 294 0028 24F00304 		bic	r4, r4, #3
+ 295              	.LVL31:
+ 149:rt_thread/src/memheap.c ****     if (size < RT_MEMHEAP_MINIALLOC)
+ 296              		.loc 1 149 0
+ 297 002c 0B2C     		cmp	r4, #11
+ 298 002e 00D8     		bhi	.L16
+ 150:rt_thread/src/memheap.c ****         size = RT_MEMHEAP_MINIALLOC;
+ 299              		.loc 1 150 0
+ 300 0030 0C24     		movs	r4, #12
+ 301              	.LVL32:
+ 302              	.L16:
+ 151:rt_thread/src/memheap.c **** 
+ 152:rt_thread/src/memheap.c ****     RT_DEBUG_LOG(RT_DEBUG_MEMHEAP, ("allocate %d on heap:%8.*s",
+ 153:rt_thread/src/memheap.c ****                                     size, RT_NAME_MAX, heap->parent.name));
+ 154:rt_thread/src/memheap.c **** 
+ 155:rt_thread/src/memheap.c ****     if (size < heap->available_size)
+ 303              		.loc 1 155 0
+ 304 0032 F369     		ldr	r3, [r6, #28]
+ 305 0034 9C42     		cmp	r4, r3
+ARM GAS  /tmp/cc1FmEdk.s 			page 9
+
+
+ 306 0036 6AD2     		bcs	.L28
+ 307              	.LVL33:
+ 156:rt_thread/src/memheap.c ****     {
+ 157:rt_thread/src/memheap.c ****         /* search on free list */
+ 158:rt_thread/src/memheap.c ****         free_size = 0;
+ 159:rt_thread/src/memheap.c **** 
+ 160:rt_thread/src/memheap.c ****         /* lock memheap */
+ 161:rt_thread/src/memheap.c ****         result = rt_sem_take(&(heap->lock), RT_WAITING_FOREVER);
+ 308              		.loc 1 161 0
+ 309 0038 06F14405 		add	r5, r6, #68
+ 310 003c 4FF0FF31 		mov	r1, #-1
+ 311 0040 2846     		mov	r0, r5
+ 312 0042 FFF7FEFF 		bl	rt_sem_take
+ 313              	.LVL34:
+ 162:rt_thread/src/memheap.c ****         if (result != RT_EOK)
+ 314              		.loc 1 162 0
+ 315 0046 18B1     		cbz	r0, .L18
+ 163:rt_thread/src/memheap.c ****         {
+ 164:rt_thread/src/memheap.c ****             rt_set_errno(result);
+ 316              		.loc 1 164 0
+ 317 0048 FFF7FEFF 		bl	rt_set_errno
+ 318              	.LVL35:
+ 165:rt_thread/src/memheap.c **** 
+ 166:rt_thread/src/memheap.c ****             return RT_NULL;
+ 319              		.loc 1 166 0
+ 320 004c 0024     		movs	r4, #0
+ 321              	.LVL36:
+ 322 004e 5FE0     		b	.L17
+ 323              	.LVL37:
+ 324              	.L18:
+ 167:rt_thread/src/memheap.c ****         }
+ 168:rt_thread/src/memheap.c **** 
+ 169:rt_thread/src/memheap.c ****         /* get the first free memory block */
+ 170:rt_thread/src/memheap.c ****         header_ptr = heap->free_list->next_free;
+ 325              		.loc 1 170 0
+ 326 0050 B26A     		ldr	r2, [r6, #40]
+ 327 0052 1069     		ldr	r0, [r2, #16]
+ 328              	.LVL38:
+ 158:rt_thread/src/memheap.c **** 
+ 329              		.loc 1 158 0
+ 330 0054 0023     		movs	r3, #0
+ 171:rt_thread/src/memheap.c ****         while (header_ptr != heap->free_list && free_size < size)
+ 331              		.loc 1 171 0
+ 332 0056 05E0     		b	.L19
+ 333              	.LVL39:
+ 334              	.L22:
+ 172:rt_thread/src/memheap.c ****         {
+ 173:rt_thread/src/memheap.c ****             /* get current freed memory block size */
+ 174:rt_thread/src/memheap.c ****             free_size = MEMITEM_SIZE(header_ptr);
+ 335              		.loc 1 174 0
+ 336 0058 8368     		ldr	r3, [r0, #8]
+ 337              	.LVL40:
+ 338 005a 1B1A     		subs	r3, r3, r0
+ 339 005c 183B     		subs	r3, r3, #24
+ 340              	.LVL41:
+ 175:rt_thread/src/memheap.c ****             if (free_size < size)
+ 341              		.loc 1 175 0
+ARM GAS  /tmp/cc1FmEdk.s 			page 10
+
+
+ 342 005e 9C42     		cmp	r4, r3
+ 343 0060 00D9     		bls	.L19
+ 176:rt_thread/src/memheap.c ****             {
+ 177:rt_thread/src/memheap.c ****                 /* move to next free memory block */
+ 178:rt_thread/src/memheap.c ****                 header_ptr = header_ptr->next_free;
+ 344              		.loc 1 178 0
+ 345 0062 0069     		ldr	r0, [r0, #16]
+ 346              	.LVL42:
+ 347              	.L19:
+ 171:rt_thread/src/memheap.c ****         {
+ 348              		.loc 1 171 0
+ 349 0064 9042     		cmp	r0, r2
+ 350 0066 01D0     		beq	.L21
+ 171:rt_thread/src/memheap.c ****         {
+ 351              		.loc 1 171 0 is_stmt 0 discriminator 1
+ 352 0068 9C42     		cmp	r4, r3
+ 353 006a F5D8     		bhi	.L22
+ 354              	.L21:
+ 179:rt_thread/src/memheap.c ****             }
+ 180:rt_thread/src/memheap.c ****         }
+ 181:rt_thread/src/memheap.c **** 
+ 182:rt_thread/src/memheap.c ****         /* determine if the memory is available. */
+ 183:rt_thread/src/memheap.c ****         if (free_size >= size)
+ 355              		.loc 1 183 0 is_stmt 1
+ 356 006c 9C42     		cmp	r4, r3
+ 357 006e 49D8     		bhi	.L23
+ 184:rt_thread/src/memheap.c ****         {
+ 185:rt_thread/src/memheap.c ****             /* a block that satisfies the request has been found. */
+ 186:rt_thread/src/memheap.c **** 
+ 187:rt_thread/src/memheap.c ****             /* determine if the block needs to be split. */
+ 188:rt_thread/src/memheap.c ****             if (free_size >= (size + RT_MEMHEAP_SIZE + RT_MEMHEAP_MINIALLOC))
+ 358              		.loc 1 188 0
+ 359 0070 04F12402 		add	r2, r4, #36
+ 360 0074 9342     		cmp	r3, r2
+ 361 0076 29D3     		bcc	.L24
+ 362              	.LBB2:
+ 189:rt_thread/src/memheap.c ****             {
+ 190:rt_thread/src/memheap.c ****                 struct rt_memheap_item *new_ptr;
+ 191:rt_thread/src/memheap.c **** 
+ 192:rt_thread/src/memheap.c ****                 /* split the block. */
+ 193:rt_thread/src/memheap.c ****                 new_ptr = (struct rt_memheap_item *)
+ 194:rt_thread/src/memheap.c ****                           (((rt_uint8_t *)header_ptr) + size + RT_MEMHEAP_SIZE);
+ 363              		.loc 1 194 0
+ 364 0078 04F11802 		add	r2, r4, #24
+ 193:rt_thread/src/memheap.c ****                           (((rt_uint8_t *)header_ptr) + size + RT_MEMHEAP_SIZE);
+ 365              		.loc 1 193 0
+ 366 007c 8318     		adds	r3, r0, r2
+ 367              	.LVL43:
+ 195:rt_thread/src/memheap.c **** 
+ 196:rt_thread/src/memheap.c ****                 RT_DEBUG_LOG(RT_DEBUG_MEMHEAP,
+ 197:rt_thread/src/memheap.c ****                              ("split: block[0x%08x] nextm[0x%08x] prevm[0x%08x] to new[0x%08x]\n",
+ 198:rt_thread/src/memheap.c ****                               header_ptr,
+ 199:rt_thread/src/memheap.c ****                               header_ptr->next,
+ 200:rt_thread/src/memheap.c ****                               header_ptr->prev,
+ 201:rt_thread/src/memheap.c ****                               new_ptr));
+ 202:rt_thread/src/memheap.c **** 
+ 203:rt_thread/src/memheap.c ****                 /* mark the new block as a memory block and freed. */
+ARM GAS  /tmp/cc1FmEdk.s 			page 11
+
+
+ 204:rt_thread/src/memheap.c ****                 new_ptr->magic = RT_MEMHEAP_MAGIC;
+ 368              		.loc 1 204 0
+ 369 007e 2849     		ldr	r1, .L30+12
+ 370 0080 8150     		str	r1, [r0, r2]
+ 205:rt_thread/src/memheap.c **** 
+ 206:rt_thread/src/memheap.c ****                 /* put the pool pointer into the new block. */
+ 207:rt_thread/src/memheap.c ****                 new_ptr->pool_ptr = heap;
+ 371              		.loc 1 207 0
+ 372 0082 5E60     		str	r6, [r3, #4]
+ 208:rt_thread/src/memheap.c **** 
+ 209:rt_thread/src/memheap.c ****                 /* break down the block list */
+ 210:rt_thread/src/memheap.c ****                 new_ptr->prev          = header_ptr;
+ 373              		.loc 1 210 0
+ 374 0084 D860     		str	r0, [r3, #12]
+ 211:rt_thread/src/memheap.c ****                 new_ptr->next          = header_ptr->next;
+ 375              		.loc 1 211 0
+ 376 0086 8268     		ldr	r2, [r0, #8]
+ 377 0088 9A60     		str	r2, [r3, #8]
+ 212:rt_thread/src/memheap.c ****                 header_ptr->next->prev = new_ptr;
+ 378              		.loc 1 212 0
+ 379 008a 8268     		ldr	r2, [r0, #8]
+ 380 008c D360     		str	r3, [r2, #12]
+ 213:rt_thread/src/memheap.c ****                 header_ptr->next       = new_ptr;
+ 381              		.loc 1 213 0
+ 382 008e 8360     		str	r3, [r0, #8]
+ 214:rt_thread/src/memheap.c **** 
+ 215:rt_thread/src/memheap.c ****                 /* remove header ptr from free list */
+ 216:rt_thread/src/memheap.c ****                 header_ptr->next_free->prev_free = header_ptr->prev_free;
+ 383              		.loc 1 216 0
+ 384 0090 0269     		ldr	r2, [r0, #16]
+ 385 0092 4169     		ldr	r1, [r0, #20]
+ 386 0094 5161     		str	r1, [r2, #20]
+ 217:rt_thread/src/memheap.c ****                 header_ptr->prev_free->next_free = header_ptr->next_free;
+ 387              		.loc 1 217 0
+ 388 0096 4269     		ldr	r2, [r0, #20]
+ 389 0098 0169     		ldr	r1, [r0, #16]
+ 390 009a 1161     		str	r1, [r2, #16]
+ 218:rt_thread/src/memheap.c ****                 header_ptr->next_free = RT_NULL;
+ 391              		.loc 1 218 0
+ 392 009c 0022     		movs	r2, #0
+ 393 009e 0261     		str	r2, [r0, #16]
+ 219:rt_thread/src/memheap.c ****                 header_ptr->prev_free = RT_NULL;
+ 394              		.loc 1 219 0
+ 395 00a0 4261     		str	r2, [r0, #20]
+ 220:rt_thread/src/memheap.c **** 
+ 221:rt_thread/src/memheap.c ****                 /* insert new_ptr to free list */
+ 222:rt_thread/src/memheap.c ****                 new_ptr->next_free = heap->free_list->next_free;
+ 396              		.loc 1 222 0
+ 397 00a2 B26A     		ldr	r2, [r6, #40]
+ 398 00a4 1269     		ldr	r2, [r2, #16]
+ 399 00a6 1A61     		str	r2, [r3, #16]
+ 223:rt_thread/src/memheap.c ****                 new_ptr->prev_free = heap->free_list;
+ 400              		.loc 1 223 0
+ 401 00a8 B26A     		ldr	r2, [r6, #40]
+ 402 00aa 5A61     		str	r2, [r3, #20]
+ 224:rt_thread/src/memheap.c ****                 heap->free_list->next_free->prev_free = new_ptr;
+ 403              		.loc 1 224 0
+ARM GAS  /tmp/cc1FmEdk.s 			page 12
+
+
+ 404 00ac B26A     		ldr	r2, [r6, #40]
+ 405 00ae 1269     		ldr	r2, [r2, #16]
+ 406 00b0 5361     		str	r3, [r2, #20]
+ 225:rt_thread/src/memheap.c ****                 heap->free_list->next_free            = new_ptr;
+ 407              		.loc 1 225 0
+ 408 00b2 B26A     		ldr	r2, [r6, #40]
+ 409 00b4 1361     		str	r3, [r2, #16]
+ 226:rt_thread/src/memheap.c ****                 RT_DEBUG_LOG(RT_DEBUG_MEMHEAP, ("new ptr: next_free 0x%08x, prev_free 0x%08x\n",
+ 227:rt_thread/src/memheap.c ****                                                 new_ptr->next_free,
+ 228:rt_thread/src/memheap.c ****                                                 new_ptr->prev_free));
+ 229:rt_thread/src/memheap.c **** 
+ 230:rt_thread/src/memheap.c ****                 /* decrement the available byte count.  */
+ 231:rt_thread/src/memheap.c ****                 heap->available_size = heap->available_size -
+ 410              		.loc 1 231 0
+ 411 00b6 F369     		ldr	r3, [r6, #28]
+ 412              	.LVL44:
+ 413 00b8 1C1B     		subs	r4, r3, r4
+ 414              	.LVL45:
+ 232:rt_thread/src/memheap.c ****                                        size -
+ 415              		.loc 1 232 0
+ 416 00ba 183C     		subs	r4, r4, #24
+ 231:rt_thread/src/memheap.c ****                                        size -
+ 417              		.loc 1 231 0
+ 418 00bc F461     		str	r4, [r6, #28]
+ 419              	.LVL46:
+ 233:rt_thread/src/memheap.c ****                                        RT_MEMHEAP_SIZE;
+ 234:rt_thread/src/memheap.c ****                 if (heap->pool_size - heap->available_size > heap->max_used_size)
+ 420              		.loc 1 234 0
+ 421 00be B369     		ldr	r3, [r6, #24]
+ 422 00c0 1C1B     		subs	r4, r3, r4
+ 423 00c2 336A     		ldr	r3, [r6, #32]
+ 424 00c4 9C42     		cmp	r4, r3
+ 425 00c6 13D9     		bls	.L25
+ 235:rt_thread/src/memheap.c ****                     heap->max_used_size = heap->pool_size - heap->available_size;
+ 426              		.loc 1 235 0
+ 427 00c8 3462     		str	r4, [r6, #32]
+ 428 00ca 11E0     		b	.L25
+ 429              	.LVL47:
+ 430              	.L24:
+ 431              	.LBE2:
+ 236:rt_thread/src/memheap.c ****             }
+ 237:rt_thread/src/memheap.c ****             else
+ 238:rt_thread/src/memheap.c ****             {
+ 239:rt_thread/src/memheap.c ****                 /* decrement the entire free size from the available bytes count. */
+ 240:rt_thread/src/memheap.c ****                 heap->available_size = heap->available_size - free_size;
+ 432              		.loc 1 240 0
+ 433 00cc F269     		ldr	r2, [r6, #28]
+ 434 00ce D31A     		subs	r3, r2, r3
+ 435              	.LVL48:
+ 436 00d0 F361     		str	r3, [r6, #28]
+ 241:rt_thread/src/memheap.c ****                 if (heap->pool_size - heap->available_size > heap->max_used_size)
+ 437              		.loc 1 241 0
+ 438 00d2 B269     		ldr	r2, [r6, #24]
+ 439 00d4 D31A     		subs	r3, r2, r3
+ 440 00d6 326A     		ldr	r2, [r6, #32]
+ 441 00d8 9342     		cmp	r3, r2
+ 442 00da 00D9     		bls	.L26
+ARM GAS  /tmp/cc1FmEdk.s 			page 13
+
+
+ 242:rt_thread/src/memheap.c ****                     heap->max_used_size = heap->pool_size - heap->available_size;
+ 443              		.loc 1 242 0
+ 444 00dc 3362     		str	r3, [r6, #32]
+ 445              	.L26:
+ 243:rt_thread/src/memheap.c **** 
+ 244:rt_thread/src/memheap.c ****                 /* remove header_ptr from free list */
+ 245:rt_thread/src/memheap.c ****                 RT_DEBUG_LOG(RT_DEBUG_MEMHEAP,
+ 246:rt_thread/src/memheap.c ****                              ("one block: block[0x%08x], next_free 0x%08x, prev_free 0x%08x\n",
+ 247:rt_thread/src/memheap.c ****                               header_ptr,
+ 248:rt_thread/src/memheap.c ****                               header_ptr->next_free,
+ 249:rt_thread/src/memheap.c ****                               header_ptr->prev_free));
+ 250:rt_thread/src/memheap.c **** 
+ 251:rt_thread/src/memheap.c ****                 header_ptr->next_free->prev_free = header_ptr->prev_free;
+ 446              		.loc 1 251 0
+ 447 00de 0369     		ldr	r3, [r0, #16]
+ 448 00e0 4269     		ldr	r2, [r0, #20]
+ 449 00e2 5A61     		str	r2, [r3, #20]
+ 252:rt_thread/src/memheap.c ****                 header_ptr->prev_free->next_free = header_ptr->next_free;
+ 450              		.loc 1 252 0
+ 451 00e4 4369     		ldr	r3, [r0, #20]
+ 452 00e6 0269     		ldr	r2, [r0, #16]
+ 453 00e8 1A61     		str	r2, [r3, #16]
+ 253:rt_thread/src/memheap.c ****                 header_ptr->next_free = RT_NULL;
+ 454              		.loc 1 253 0
+ 455 00ea 0023     		movs	r3, #0
+ 456 00ec 0361     		str	r3, [r0, #16]
+ 254:rt_thread/src/memheap.c ****                 header_ptr->prev_free = RT_NULL;
+ 457              		.loc 1 254 0
+ 458 00ee 4361     		str	r3, [r0, #20]
+ 459              	.LVL49:
+ 460              	.L25:
+ 255:rt_thread/src/memheap.c ****             }
+ 256:rt_thread/src/memheap.c **** 
+ 257:rt_thread/src/memheap.c ****             /* Mark the allocated block as not available. */
+ 258:rt_thread/src/memheap.c ****             header_ptr->magic |= RT_MEMHEAP_USED;
+ 461              		.loc 1 258 0
+ 462 00f0 0368     		ldr	r3, [r0]
+ 463 00f2 43F00103 		orr	r3, r3, #1
+ 464 00f6 0446     		mov	r4, r0
+ 465 00f8 44F8183B 		str	r3, [r4], #24
+ 259:rt_thread/src/memheap.c **** 
+ 260:rt_thread/src/memheap.c ****             /* release lock */
+ 261:rt_thread/src/memheap.c ****             rt_sem_release(&(heap->lock));
+ 466              		.loc 1 261 0
+ 467 00fc 2846     		mov	r0, r5
+ 468              	.LVL50:
+ 469 00fe FFF7FEFF 		bl	rt_sem_release
+ 470              	.LVL51:
+ 262:rt_thread/src/memheap.c **** 
+ 263:rt_thread/src/memheap.c ****             /* Return a memory address to the caller.  */
+ 264:rt_thread/src/memheap.c ****             RT_DEBUG_LOG(RT_DEBUG_MEMHEAP,
+ 265:rt_thread/src/memheap.c ****                          ("alloc mem: memory[0x%08x], heap[0x%08x], size: %d\n",
+ 266:rt_thread/src/memheap.c ****                           (void *)((rt_uint8_t *)header_ptr + RT_MEMHEAP_SIZE),
+ 267:rt_thread/src/memheap.c ****                           header_ptr,
+ 268:rt_thread/src/memheap.c ****                           size));
+ 269:rt_thread/src/memheap.c **** 
+ 270:rt_thread/src/memheap.c ****             return (void *)((rt_uint8_t *)header_ptr + RT_MEMHEAP_SIZE);
+ARM GAS  /tmp/cc1FmEdk.s 			page 14
+
+
+ 471              		.loc 1 270 0
+ 472 0102 05E0     		b	.L17
+ 473              	.LVL52:
+ 474              	.L23:
+ 271:rt_thread/src/memheap.c ****         }
+ 272:rt_thread/src/memheap.c **** 
+ 273:rt_thread/src/memheap.c ****         /* release lock */
+ 274:rt_thread/src/memheap.c ****         rt_sem_release(&(heap->lock));
+ 475              		.loc 1 274 0
+ 476 0104 2846     		mov	r0, r5
+ 477              	.LVL53:
+ 478 0106 FFF7FEFF 		bl	rt_sem_release
+ 479              	.LVL54:
+ 275:rt_thread/src/memheap.c ****     }
+ 276:rt_thread/src/memheap.c **** 
+ 277:rt_thread/src/memheap.c ****     RT_DEBUG_LOG(RT_DEBUG_MEMHEAP, ("allocate memory: failed\n"));
+ 278:rt_thread/src/memheap.c **** 
+ 279:rt_thread/src/memheap.c ****     /* Return the completion status.  */
+ 280:rt_thread/src/memheap.c ****     return RT_NULL;
+ 480              		.loc 1 280 0
+ 481 010a 0024     		movs	r4, #0
+ 482              	.LVL55:
+ 483 010c 00E0     		b	.L17
+ 484              	.LVL56:
+ 485              	.L28:
+ 486 010e 0024     		movs	r4, #0
+ 487              	.LVL57:
+ 488              	.L17:
+ 281:rt_thread/src/memheap.c **** }
+ 489              		.loc 1 281 0
+ 490 0110 2046     		mov	r0, r4
+ 491 0112 70BD     		pop	{r4, r5, r6, pc}
+ 492              	.LVL58:
+ 493              	.L31:
+ 494              		.align	2
+ 495              	.L30:
+ 496 0114 00000000 		.word	.LANCHOR2
+ 497 0118 88000000 		.word	.LC4
+ 498 011c 1C000000 		.word	.LC2
+ 499 0120 A01EA01E 		.word	513810080
+ 500              		.cfi_endproc
+ 501              	.LFE17:
+ 503              		.section	.text.rt_memheap_free,"ax",%progbits
+ 504              		.align	2
+ 505              		.global	rt_memheap_free
+ 506              		.thumb
+ 507              		.thumb_func
+ 509              	rt_memheap_free:
+ 510              	.LFB19:
+ 282:rt_thread/src/memheap.c **** RTM_EXPORT(rt_memheap_alloc);
+ 283:rt_thread/src/memheap.c **** 
+ 284:rt_thread/src/memheap.c **** void *rt_memheap_realloc(struct rt_memheap *heap, void *ptr, rt_size_t newsize)
+ 285:rt_thread/src/memheap.c **** {
+ 286:rt_thread/src/memheap.c ****     rt_err_t result;
+ 287:rt_thread/src/memheap.c ****     rt_size_t oldsize;
+ 288:rt_thread/src/memheap.c ****     struct rt_memheap_item *header_ptr;
+ 289:rt_thread/src/memheap.c ****     struct rt_memheap_item *new_ptr;
+ARM GAS  /tmp/cc1FmEdk.s 			page 15
+
+
+ 290:rt_thread/src/memheap.c **** 
+ 291:rt_thread/src/memheap.c ****     RT_ASSERT(heap);
+ 292:rt_thread/src/memheap.c ****     RT_ASSERT(rt_object_get_type(&heap->parent) == RT_Object_Class_MemHeap);
+ 293:rt_thread/src/memheap.c **** 
+ 294:rt_thread/src/memheap.c ****     if (newsize == 0)
+ 295:rt_thread/src/memheap.c ****     {
+ 296:rt_thread/src/memheap.c ****         rt_memheap_free(ptr);
+ 297:rt_thread/src/memheap.c **** 
+ 298:rt_thread/src/memheap.c ****         return RT_NULL;
+ 299:rt_thread/src/memheap.c ****     }
+ 300:rt_thread/src/memheap.c ****     /* align allocated size */
+ 301:rt_thread/src/memheap.c ****     newsize = RT_ALIGN(newsize, RT_ALIGN_SIZE);
+ 302:rt_thread/src/memheap.c ****     if (newsize < RT_MEMHEAP_MINIALLOC)
+ 303:rt_thread/src/memheap.c ****         newsize = RT_MEMHEAP_MINIALLOC;
+ 304:rt_thread/src/memheap.c **** 
+ 305:rt_thread/src/memheap.c ****     if (ptr == RT_NULL)
+ 306:rt_thread/src/memheap.c ****     {
+ 307:rt_thread/src/memheap.c ****         return rt_memheap_alloc(heap, newsize);
+ 308:rt_thread/src/memheap.c ****     }
+ 309:rt_thread/src/memheap.c **** 
+ 310:rt_thread/src/memheap.c ****     /* get memory block header and get the size of memory block */
+ 311:rt_thread/src/memheap.c ****     header_ptr = (struct rt_memheap_item *)
+ 312:rt_thread/src/memheap.c ****                  ((rt_uint8_t *)ptr - RT_MEMHEAP_SIZE);
+ 313:rt_thread/src/memheap.c ****     oldsize = MEMITEM_SIZE(header_ptr);
+ 314:rt_thread/src/memheap.c ****     /* re-allocate memory */
+ 315:rt_thread/src/memheap.c ****     if (newsize > oldsize)
+ 316:rt_thread/src/memheap.c ****     {
+ 317:rt_thread/src/memheap.c ****         void *new_ptr;
+ 318:rt_thread/src/memheap.c ****         struct rt_memheap_item *next_ptr;
+ 319:rt_thread/src/memheap.c **** 
+ 320:rt_thread/src/memheap.c ****         /* lock memheap */
+ 321:rt_thread/src/memheap.c ****         result = rt_sem_take(&(heap->lock), RT_WAITING_FOREVER);
+ 322:rt_thread/src/memheap.c ****         if (result != RT_EOK)
+ 323:rt_thread/src/memheap.c ****         {
+ 324:rt_thread/src/memheap.c ****             rt_set_errno(result);
+ 325:rt_thread/src/memheap.c ****             return RT_NULL;
+ 326:rt_thread/src/memheap.c ****         }
+ 327:rt_thread/src/memheap.c **** 
+ 328:rt_thread/src/memheap.c ****         next_ptr = header_ptr->next;
+ 329:rt_thread/src/memheap.c **** 
+ 330:rt_thread/src/memheap.c ****         /* header_ptr should not be the tail */
+ 331:rt_thread/src/memheap.c ****         RT_ASSERT(next_ptr > header_ptr);
+ 332:rt_thread/src/memheap.c **** 
+ 333:rt_thread/src/memheap.c ****         /* check whether the following free space is enough to expand */
+ 334:rt_thread/src/memheap.c ****         if (!RT_MEMHEAP_IS_USED(next_ptr))
+ 335:rt_thread/src/memheap.c ****         {
+ 336:rt_thread/src/memheap.c ****             rt_int32_t nextsize;
+ 337:rt_thread/src/memheap.c **** 
+ 338:rt_thread/src/memheap.c ****             nextsize = MEMITEM_SIZE(next_ptr);
+ 339:rt_thread/src/memheap.c ****             RT_ASSERT(next_ptr > 0);
+ 340:rt_thread/src/memheap.c **** 
+ 341:rt_thread/src/memheap.c ****             /* Here is the ASCII art of the situation that we can make use of
+ 342:rt_thread/src/memheap.c ****              * the next free node without alloc/memcpy, |*| is the control
+ 343:rt_thread/src/memheap.c ****              * block:
+ 344:rt_thread/src/memheap.c ****              *
+ 345:rt_thread/src/memheap.c ****              *      oldsize           free node
+ 346:rt_thread/src/memheap.c ****              * |*|-----------|*|----------------------|*|
+ARM GAS  /tmp/cc1FmEdk.s 			page 16
+
+
+ 347:rt_thread/src/memheap.c ****              *         newsize          >= minialloc
+ 348:rt_thread/src/memheap.c ****              * |*|----------------|*|-----------------|*|
+ 349:rt_thread/src/memheap.c ****              */
+ 350:rt_thread/src/memheap.c ****             if (nextsize + oldsize > newsize + RT_MEMHEAP_MINIALLOC)
+ 351:rt_thread/src/memheap.c ****             {
+ 352:rt_thread/src/memheap.c ****                 /* decrement the entire free size from the available bytes count. */
+ 353:rt_thread/src/memheap.c ****                 heap->available_size = heap->available_size - (newsize - oldsize);
+ 354:rt_thread/src/memheap.c ****                 if (heap->pool_size - heap->available_size > heap->max_used_size)
+ 355:rt_thread/src/memheap.c ****                     heap->max_used_size = heap->pool_size - heap->available_size;
+ 356:rt_thread/src/memheap.c **** 
+ 357:rt_thread/src/memheap.c ****                 /* remove next_ptr from free list */
+ 358:rt_thread/src/memheap.c ****                 RT_DEBUG_LOG(RT_DEBUG_MEMHEAP,
+ 359:rt_thread/src/memheap.c ****                              ("remove block: block[0x%08x], next_free 0x%08x, prev_free 0x%08x",
+ 360:rt_thread/src/memheap.c ****                               next_ptr,
+ 361:rt_thread/src/memheap.c ****                               next_ptr->next_free,
+ 362:rt_thread/src/memheap.c ****                               next_ptr->prev_free));
+ 363:rt_thread/src/memheap.c **** 
+ 364:rt_thread/src/memheap.c ****                 next_ptr->next_free->prev_free = next_ptr->prev_free;
+ 365:rt_thread/src/memheap.c ****                 next_ptr->prev_free->next_free = next_ptr->next_free;
+ 366:rt_thread/src/memheap.c ****                 next_ptr->next->prev = next_ptr->prev;
+ 367:rt_thread/src/memheap.c ****                 next_ptr->prev->next = next_ptr->next;
+ 368:rt_thread/src/memheap.c **** 
+ 369:rt_thread/src/memheap.c ****                 /* build a new one on the right place */
+ 370:rt_thread/src/memheap.c ****                 next_ptr = (struct rt_memheap_item *)((char *)ptr + newsize);
+ 371:rt_thread/src/memheap.c **** 
+ 372:rt_thread/src/memheap.c ****                 RT_DEBUG_LOG(RT_DEBUG_MEMHEAP,
+ 373:rt_thread/src/memheap.c ****                              ("new free block: block[0x%08x] nextm[0x%08x] prevm[0x%08x]",
+ 374:rt_thread/src/memheap.c ****                               next_ptr,
+ 375:rt_thread/src/memheap.c ****                               next_ptr->next,
+ 376:rt_thread/src/memheap.c ****                               next_ptr->prev));
+ 377:rt_thread/src/memheap.c **** 
+ 378:rt_thread/src/memheap.c ****                 /* mark the new block as a memory block and freed. */
+ 379:rt_thread/src/memheap.c ****                 next_ptr->magic = RT_MEMHEAP_MAGIC;
+ 380:rt_thread/src/memheap.c **** 
+ 381:rt_thread/src/memheap.c ****                 /* put the pool pointer into the new block. */
+ 382:rt_thread/src/memheap.c ****                 next_ptr->pool_ptr = heap;
+ 383:rt_thread/src/memheap.c **** 
+ 384:rt_thread/src/memheap.c ****                 next_ptr->prev          = header_ptr;
+ 385:rt_thread/src/memheap.c ****                 next_ptr->next          = header_ptr->next;
+ 386:rt_thread/src/memheap.c ****                 header_ptr->next->prev = next_ptr;
+ 387:rt_thread/src/memheap.c ****                 header_ptr->next       = next_ptr;
+ 388:rt_thread/src/memheap.c **** 
+ 389:rt_thread/src/memheap.c ****                 /* insert next_ptr to free list */
+ 390:rt_thread/src/memheap.c ****                 next_ptr->next_free = heap->free_list->next_free;
+ 391:rt_thread/src/memheap.c ****                 next_ptr->prev_free = heap->free_list;
+ 392:rt_thread/src/memheap.c ****                 heap->free_list->next_free->prev_free = next_ptr;
+ 393:rt_thread/src/memheap.c ****                 heap->free_list->next_free            = next_ptr;
+ 394:rt_thread/src/memheap.c ****                 RT_DEBUG_LOG(RT_DEBUG_MEMHEAP, ("new ptr: next_free 0x%08x, prev_free 0x%08x",
+ 395:rt_thread/src/memheap.c ****                                                 next_ptr->next_free,
+ 396:rt_thread/src/memheap.c ****                                                 next_ptr->prev_free));
+ 397:rt_thread/src/memheap.c **** 
+ 398:rt_thread/src/memheap.c ****                 /* release lock */
+ 399:rt_thread/src/memheap.c ****                 rt_sem_release(&(heap->lock));
+ 400:rt_thread/src/memheap.c **** 
+ 401:rt_thread/src/memheap.c ****                 return ptr;
+ 402:rt_thread/src/memheap.c ****             }
+ 403:rt_thread/src/memheap.c ****         }
+ARM GAS  /tmp/cc1FmEdk.s 			page 17
+
+
+ 404:rt_thread/src/memheap.c **** 
+ 405:rt_thread/src/memheap.c ****         /* release lock */
+ 406:rt_thread/src/memheap.c ****         rt_sem_release(&(heap->lock));
+ 407:rt_thread/src/memheap.c **** 
+ 408:rt_thread/src/memheap.c ****         /* re-allocate a memory block */
+ 409:rt_thread/src/memheap.c ****         new_ptr = (void *)rt_memheap_alloc(heap, newsize);
+ 410:rt_thread/src/memheap.c ****         if (new_ptr != RT_NULL)
+ 411:rt_thread/src/memheap.c ****         {
+ 412:rt_thread/src/memheap.c ****             rt_memcpy(new_ptr, ptr, oldsize < newsize ? oldsize : newsize);
+ 413:rt_thread/src/memheap.c ****             rt_memheap_free(ptr);
+ 414:rt_thread/src/memheap.c ****         }
+ 415:rt_thread/src/memheap.c **** 
+ 416:rt_thread/src/memheap.c ****         return new_ptr;
+ 417:rt_thread/src/memheap.c ****     }
+ 418:rt_thread/src/memheap.c **** 
+ 419:rt_thread/src/memheap.c ****     /* don't split when there is less than one node space left */
+ 420:rt_thread/src/memheap.c ****     if (newsize + RT_MEMHEAP_SIZE + RT_MEMHEAP_MINIALLOC >= oldsize)
+ 421:rt_thread/src/memheap.c ****         return ptr;
+ 422:rt_thread/src/memheap.c **** 
+ 423:rt_thread/src/memheap.c ****     /* lock memheap */
+ 424:rt_thread/src/memheap.c ****     result = rt_sem_take(&(heap->lock), RT_WAITING_FOREVER);
+ 425:rt_thread/src/memheap.c ****     if (result != RT_EOK)
+ 426:rt_thread/src/memheap.c ****     {
+ 427:rt_thread/src/memheap.c ****         rt_set_errno(result);
+ 428:rt_thread/src/memheap.c **** 
+ 429:rt_thread/src/memheap.c ****         return RT_NULL;
+ 430:rt_thread/src/memheap.c ****     }
+ 431:rt_thread/src/memheap.c **** 
+ 432:rt_thread/src/memheap.c ****     /* split the block. */
+ 433:rt_thread/src/memheap.c ****     new_ptr = (struct rt_memheap_item *)
+ 434:rt_thread/src/memheap.c ****               (((rt_uint8_t *)header_ptr) + newsize + RT_MEMHEAP_SIZE);
+ 435:rt_thread/src/memheap.c **** 
+ 436:rt_thread/src/memheap.c ****     RT_DEBUG_LOG(RT_DEBUG_MEMHEAP,
+ 437:rt_thread/src/memheap.c ****                  ("split: block[0x%08x] nextm[0x%08x] prevm[0x%08x] to new[0x%08x]\n",
+ 438:rt_thread/src/memheap.c ****                   header_ptr,
+ 439:rt_thread/src/memheap.c ****                   header_ptr->next,
+ 440:rt_thread/src/memheap.c ****                   header_ptr->prev,
+ 441:rt_thread/src/memheap.c ****                   new_ptr));
+ 442:rt_thread/src/memheap.c **** 
+ 443:rt_thread/src/memheap.c ****     /* mark the new block as a memory block and freed. */
+ 444:rt_thread/src/memheap.c ****     new_ptr->magic = RT_MEMHEAP_MAGIC;
+ 445:rt_thread/src/memheap.c ****     /* put the pool pointer into the new block. */
+ 446:rt_thread/src/memheap.c ****     new_ptr->pool_ptr = heap;
+ 447:rt_thread/src/memheap.c **** 
+ 448:rt_thread/src/memheap.c ****     /* break down the block list */
+ 449:rt_thread/src/memheap.c ****     new_ptr->prev          = header_ptr;
+ 450:rt_thread/src/memheap.c ****     new_ptr->next          = header_ptr->next;
+ 451:rt_thread/src/memheap.c ****     header_ptr->next->prev = new_ptr;
+ 452:rt_thread/src/memheap.c ****     header_ptr->next       = new_ptr;
+ 453:rt_thread/src/memheap.c **** 
+ 454:rt_thread/src/memheap.c ****     /* determine if the block can be merged with the next neighbor. */
+ 455:rt_thread/src/memheap.c ****     if (!RT_MEMHEAP_IS_USED(new_ptr->next))
+ 456:rt_thread/src/memheap.c ****     {
+ 457:rt_thread/src/memheap.c ****         struct rt_memheap_item *free_ptr;
+ 458:rt_thread/src/memheap.c **** 
+ 459:rt_thread/src/memheap.c ****         /* merge block with next neighbor. */
+ 460:rt_thread/src/memheap.c ****         free_ptr = new_ptr->next;
+ARM GAS  /tmp/cc1FmEdk.s 			page 18
+
+
+ 461:rt_thread/src/memheap.c ****         heap->available_size = heap->available_size - MEMITEM_SIZE(free_ptr);
+ 462:rt_thread/src/memheap.c **** 
+ 463:rt_thread/src/memheap.c ****         RT_DEBUG_LOG(RT_DEBUG_MEMHEAP,
+ 464:rt_thread/src/memheap.c ****                      ("merge: right node 0x%08x, next_free 0x%08x, prev_free 0x%08x\n",
+ 465:rt_thread/src/memheap.c ****                       header_ptr, header_ptr->next_free, header_ptr->prev_free));
+ 466:rt_thread/src/memheap.c **** 
+ 467:rt_thread/src/memheap.c ****         free_ptr->next->prev = new_ptr;
+ 468:rt_thread/src/memheap.c ****         new_ptr->next   = free_ptr->next;
+ 469:rt_thread/src/memheap.c **** 
+ 470:rt_thread/src/memheap.c ****         /* remove free ptr from free list */
+ 471:rt_thread/src/memheap.c ****         free_ptr->next_free->prev_free = free_ptr->prev_free;
+ 472:rt_thread/src/memheap.c ****         free_ptr->prev_free->next_free = free_ptr->next_free;
+ 473:rt_thread/src/memheap.c ****     }
+ 474:rt_thread/src/memheap.c **** 
+ 475:rt_thread/src/memheap.c ****     /* insert the split block to free list */
+ 476:rt_thread/src/memheap.c ****     new_ptr->next_free = heap->free_list->next_free;
+ 477:rt_thread/src/memheap.c ****     new_ptr->prev_free = heap->free_list;
+ 478:rt_thread/src/memheap.c ****     heap->free_list->next_free->prev_free = new_ptr;
+ 479:rt_thread/src/memheap.c ****     heap->free_list->next_free            = new_ptr;
+ 480:rt_thread/src/memheap.c ****     RT_DEBUG_LOG(RT_DEBUG_MEMHEAP, ("new free ptr: next_free 0x%08x, prev_free 0x%08x\n",
+ 481:rt_thread/src/memheap.c ****                                     new_ptr->next_free,
+ 482:rt_thread/src/memheap.c ****                                     new_ptr->prev_free));
+ 483:rt_thread/src/memheap.c **** 
+ 484:rt_thread/src/memheap.c ****     /* increment the available byte count.  */
+ 485:rt_thread/src/memheap.c ****     heap->available_size = heap->available_size + MEMITEM_SIZE(new_ptr);
+ 486:rt_thread/src/memheap.c **** 
+ 487:rt_thread/src/memheap.c ****     /* release lock */
+ 488:rt_thread/src/memheap.c ****     rt_sem_release(&(heap->lock));
+ 489:rt_thread/src/memheap.c **** 
+ 490:rt_thread/src/memheap.c ****     /* return the old memory block */
+ 491:rt_thread/src/memheap.c ****     return ptr;
+ 492:rt_thread/src/memheap.c **** }
+ 493:rt_thread/src/memheap.c **** RTM_EXPORT(rt_memheap_realloc);
+ 494:rt_thread/src/memheap.c **** 
+ 495:rt_thread/src/memheap.c **** void rt_memheap_free(void *ptr)
+ 496:rt_thread/src/memheap.c **** {
+ 511              		.loc 1 496 0
+ 512              		.cfi_startproc
+ 513              		@ args = 0, pretend = 0, frame = 0
+ 514              		@ frame_needed = 0, uses_anonymous_args = 0
+ 515              	.LVL59:
+ 497:rt_thread/src/memheap.c ****     rt_err_t result;
+ 498:rt_thread/src/memheap.c ****     struct rt_memheap *heap;
+ 499:rt_thread/src/memheap.c ****     struct rt_memheap_item *header_ptr, *new_ptr;
+ 500:rt_thread/src/memheap.c ****     rt_uint32_t insert_header;
+ 501:rt_thread/src/memheap.c **** 
+ 502:rt_thread/src/memheap.c ****     /* NULL check */
+ 503:rt_thread/src/memheap.c ****     if (ptr == RT_NULL) return;
+ 516              		.loc 1 503 0
+ 517 0000 0028     		cmp	r0, #0
+ 518 0002 00F08F80 		beq	.L45
+ 496:rt_thread/src/memheap.c ****     rt_err_t result;
+ 519              		.loc 1 496 0
+ 520 0006 F8B5     		push	{r3, r4, r5, r6, r7, lr}
+ 521              	.LCFI3:
+ 522              		.cfi_def_cfa_offset 24
+ 523              		.cfi_offset 3, -24
+ARM GAS  /tmp/cc1FmEdk.s 			page 19
+
+
+ 524              		.cfi_offset 4, -20
+ 525              		.cfi_offset 5, -16
+ 526              		.cfi_offset 6, -12
+ 527              		.cfi_offset 7, -8
+ 528              		.cfi_offset 14, -4
+ 529 0008 0446     		mov	r4, r0
+ 530              	.LVL60:
+ 504:rt_thread/src/memheap.c **** 
+ 505:rt_thread/src/memheap.c ****     /* set initial status as OK */
+ 506:rt_thread/src/memheap.c ****     insert_header = 1;
+ 507:rt_thread/src/memheap.c ****     new_ptr       = RT_NULL;
+ 508:rt_thread/src/memheap.c ****     header_ptr    = (struct rt_memheap_item *)
+ 531              		.loc 1 508 0
+ 532 000a A0F11806 		sub	r6, r0, #24
+ 533              	.LVL61:
+ 509:rt_thread/src/memheap.c ****                     ((rt_uint8_t *)ptr - RT_MEMHEAP_SIZE);
+ 510:rt_thread/src/memheap.c **** 
+ 511:rt_thread/src/memheap.c ****     RT_DEBUG_LOG(RT_DEBUG_MEMHEAP, ("free memory: memory[0x%08x], block[0x%08x]\n",
+ 512:rt_thread/src/memheap.c ****                                     ptr, header_ptr));
+ 513:rt_thread/src/memheap.c **** 
+ 514:rt_thread/src/memheap.c ****     /* check magic */
+ 515:rt_thread/src/memheap.c ****     RT_ASSERT((header_ptr->magic & RT_MEMHEAP_MASK) == RT_MEMHEAP_MAGIC);
+ 534              		.loc 1 515 0
+ 535 000e 50F8183C 		ldr	r3, [r0, #-24]
+ 536 0012 23F00103 		bic	r3, r3, #1
+ 537 0016 444A     		ldr	r2, .L46
+ 538 0018 9342     		cmp	r3, r2
+ 539 001a 05D0     		beq	.L34
+ 540              		.loc 1 515 0 is_stmt 0 discriminator 1
+ 541 001c 40F20322 		movw	r2, #515
+ 542 0020 4249     		ldr	r1, .L46+4
+ 543 0022 4348     		ldr	r0, .L46+8
+ 544              	.LVL62:
+ 545 0024 FFF7FEFF 		bl	rt_assert_handler
+ 546              	.LVL63:
+ 547              	.L34:
+ 516:rt_thread/src/memheap.c ****     RT_ASSERT(header_ptr->magic & RT_MEMHEAP_USED);
+ 548              		.loc 1 516 0 is_stmt 1
+ 549 0028 54F8183C 		ldr	r3, [r4, #-24]
+ 550 002c 13F0010F 		tst	r3, #1
+ 551 0030 05D1     		bne	.L35
+ 552              		.loc 1 516 0 is_stmt 0 discriminator 1
+ 553 0032 4FF40172 		mov	r2, #516
+ 554 0036 3D49     		ldr	r1, .L46+4
+ 555 0038 3E48     		ldr	r0, .L46+12
+ 556 003a FFF7FEFF 		bl	rt_assert_handler
+ 557              	.LVL64:
+ 558              	.L35:
+ 517:rt_thread/src/memheap.c ****     /* check whether this block of memory has been over-written. */
+ 518:rt_thread/src/memheap.c ****     RT_ASSERT((header_ptr->next->magic & RT_MEMHEAP_MASK) == RT_MEMHEAP_MAGIC);
+ 559              		.loc 1 518 0 is_stmt 1
+ 560 003e 54F8103C 		ldr	r3, [r4, #-16]
+ 561 0042 1B68     		ldr	r3, [r3]
+ 562 0044 23F00103 		bic	r3, r3, #1
+ 563 0048 374A     		ldr	r2, .L46
+ 564 004a 9342     		cmp	r3, r2
+ 565 004c 05D0     		beq	.L36
+ARM GAS  /tmp/cc1FmEdk.s 			page 20
+
+
+ 566              		.loc 1 518 0 is_stmt 0 discriminator 1
+ 567 004e 40F20622 		movw	r2, #518
+ 568 0052 3649     		ldr	r1, .L46+4
+ 569 0054 3848     		ldr	r0, .L46+16
+ 570 0056 FFF7FEFF 		bl	rt_assert_handler
+ 571              	.LVL65:
+ 572              	.L36:
+ 519:rt_thread/src/memheap.c **** 
+ 520:rt_thread/src/memheap.c ****     /* get pool ptr */
+ 521:rt_thread/src/memheap.c ****     heap = header_ptr->pool_ptr;
+ 573              		.loc 1 521 0 is_stmt 1
+ 574 005a 54F8145C 		ldr	r5, [r4, #-20]
+ 575              	.LVL66:
+ 522:rt_thread/src/memheap.c **** 
+ 523:rt_thread/src/memheap.c ****     RT_ASSERT(heap);
+ 576              		.loc 1 523 0
+ 577 005e 2DB9     		cbnz	r5, .L37
+ 578              		.loc 1 523 0 is_stmt 0 discriminator 1
+ 579 0060 40F20B22 		movw	r2, #523
+ 580 0064 3149     		ldr	r1, .L46+4
+ 581 0066 3548     		ldr	r0, .L46+20
+ 582 0068 FFF7FEFF 		bl	rt_assert_handler
+ 583              	.LVL67:
+ 584              	.L37:
+ 524:rt_thread/src/memheap.c ****     RT_ASSERT(rt_object_get_type(&heap->parent) == RT_Object_Class_MemHeap);
+ 585              		.loc 1 524 0 is_stmt 1
+ 586 006c 2846     		mov	r0, r5
+ 587 006e FFF7FEFF 		bl	rt_object_get_type
+ 588              	.LVL68:
+ 589 0072 0728     		cmp	r0, #7
+ 590 0074 05D0     		beq	.L38
+ 591              		.loc 1 524 0 is_stmt 0 discriminator 1
+ 592 0076 4FF40372 		mov	r2, #524
+ 593 007a 2C49     		ldr	r1, .L46+4
+ 594 007c 3048     		ldr	r0, .L46+24
+ 595 007e FFF7FEFF 		bl	rt_assert_handler
+ 596              	.LVL69:
+ 597              	.L38:
+ 525:rt_thread/src/memheap.c **** 
+ 526:rt_thread/src/memheap.c ****     /* lock memheap */
+ 527:rt_thread/src/memheap.c ****     result = rt_sem_take(&(heap->lock), RT_WAITING_FOREVER);
+ 598              		.loc 1 527 0 is_stmt 1
+ 599 0082 05F14407 		add	r7, r5, #68
+ 600 0086 4FF0FF31 		mov	r1, #-1
+ 601 008a 3846     		mov	r0, r7
+ 602 008c FFF7FEFF 		bl	rt_sem_take
+ 603              	.LVL70:
+ 528:rt_thread/src/memheap.c ****     if (result != RT_EOK)
+ 604              		.loc 1 528 0
+ 605 0090 10B1     		cbz	r0, .L39
+ 529:rt_thread/src/memheap.c ****     {
+ 530:rt_thread/src/memheap.c ****         rt_set_errno(result);
+ 606              		.loc 1 530 0
+ 607 0092 FFF7FEFF 		bl	rt_set_errno
+ 608              	.LVL71:
+ 531:rt_thread/src/memheap.c **** 
+ 532:rt_thread/src/memheap.c ****         return ;
+ARM GAS  /tmp/cc1FmEdk.s 			page 21
+
+
+ 609              		.loc 1 532 0
+ 610 0096 F8BD     		pop	{r3, r4, r5, r6, r7, pc}
+ 611              	.LVL72:
+ 612              	.L39:
+ 533:rt_thread/src/memheap.c ****     }
+ 534:rt_thread/src/memheap.c **** 
+ 535:rt_thread/src/memheap.c ****     /* Mark the memory as available. */
+ 536:rt_thread/src/memheap.c ****     header_ptr->magic &= ~RT_MEMHEAP_USED;
+ 613              		.loc 1 536 0
+ 614 0098 54F8183C 		ldr	r3, [r4, #-24]
+ 615 009c 23F00103 		bic	r3, r3, #1
+ 616 00a0 44F8183C 		str	r3, [r4, #-24]
+ 537:rt_thread/src/memheap.c ****     /* Adjust the available number of bytes. */
+ 538:rt_thread/src/memheap.c ****     heap->available_size = heap->available_size + MEMITEM_SIZE(header_ptr);
+ 617              		.loc 1 538 0
+ 618 00a4 EB69     		ldr	r3, [r5, #28]
+ 619 00a6 54F8102C 		ldr	r2, [r4, #-16]
+ 620 00aa 921B     		subs	r2, r2, r6
+ 621 00ac 1344     		add	r3, r3, r2
+ 622 00ae A3F11802 		sub	r2, r3, #24
+ 623 00b2 EA61     		str	r2, [r5, #28]
+ 539:rt_thread/src/memheap.c **** 
+ 540:rt_thread/src/memheap.c ****     /* Determine if the block can be merged with the previous neighbor. */
+ 541:rt_thread/src/memheap.c ****     if (!RT_MEMHEAP_IS_USED(header_ptr->prev))
+ 624              		.loc 1 541 0
+ 625 00b4 54F80C2C 		ldr	r2, [r4, #-12]
+ 626 00b8 1268     		ldr	r2, [r2]
+ 627 00ba 12F0010F 		tst	r2, #1
+ 628 00be 0ED1     		bne	.L43
+ 542:rt_thread/src/memheap.c ****     {
+ 543:rt_thread/src/memheap.c ****         RT_DEBUG_LOG(RT_DEBUG_MEMHEAP, ("merge: left node 0x%08x\n",
+ 544:rt_thread/src/memheap.c ****                                         header_ptr->prev));
+ 545:rt_thread/src/memheap.c **** 
+ 546:rt_thread/src/memheap.c ****         /* adjust the available number of bytes. */
+ 547:rt_thread/src/memheap.c ****         heap->available_size = heap->available_size + RT_MEMHEAP_SIZE;
+ 629              		.loc 1 547 0
+ 630 00c0 EB61     		str	r3, [r5, #28]
+ 548:rt_thread/src/memheap.c **** 
+ 549:rt_thread/src/memheap.c ****         /* yes, merge block with previous neighbor. */
+ 550:rt_thread/src/memheap.c ****         (header_ptr->prev)->next = header_ptr->next;
+ 631              		.loc 1 550 0
+ 632 00c2 54F80C3C 		ldr	r3, [r4, #-12]
+ 633 00c6 54F8102C 		ldr	r2, [r4, #-16]
+ 634 00ca 9A60     		str	r2, [r3, #8]
+ 551:rt_thread/src/memheap.c ****         (header_ptr->next)->prev = header_ptr->prev;
+ 635              		.loc 1 551 0
+ 636 00cc 54F8103C 		ldr	r3, [r4, #-16]
+ 637 00d0 54F80C2C 		ldr	r2, [r4, #-12]
+ 638 00d4 DA60     		str	r2, [r3, #12]
+ 552:rt_thread/src/memheap.c **** 
+ 553:rt_thread/src/memheap.c ****         /* move header pointer to previous. */
+ 554:rt_thread/src/memheap.c ****         header_ptr = header_ptr->prev;
+ 639              		.loc 1 554 0
+ 640 00d6 54F80C6C 		ldr	r6, [r4, #-12]
+ 641              	.LVL73:
+ 555:rt_thread/src/memheap.c ****         /* don't insert header to free list */
+ 556:rt_thread/src/memheap.c ****         insert_header = 0;
+ARM GAS  /tmp/cc1FmEdk.s 			page 22
+
+
+ 642              		.loc 1 556 0
+ 643 00da 0022     		movs	r2, #0
+ 644 00dc 00E0     		b	.L40
+ 645              	.LVL74:
+ 646              	.L43:
+ 506:rt_thread/src/memheap.c ****     new_ptr       = RT_NULL;
+ 647              		.loc 1 506 0
+ 648 00de 0122     		movs	r2, #1
+ 649              	.LVL75:
+ 650              	.L40:
+ 557:rt_thread/src/memheap.c ****     }
+ 558:rt_thread/src/memheap.c **** 
+ 559:rt_thread/src/memheap.c ****     /* determine if the block can be merged with the next neighbor. */
+ 560:rt_thread/src/memheap.c ****     if (!RT_MEMHEAP_IS_USED(header_ptr->next))
+ 651              		.loc 1 560 0
+ 652 00e0 B368     		ldr	r3, [r6, #8]
+ 653 00e2 1B68     		ldr	r3, [r3]
+ 654 00e4 13F0010F 		tst	r3, #1
+ 655 00e8 0DD1     		bne	.L41
+ 561:rt_thread/src/memheap.c ****     {
+ 562:rt_thread/src/memheap.c ****         /* adjust the available number of bytes. */
+ 563:rt_thread/src/memheap.c ****         heap->available_size = heap->available_size + RT_MEMHEAP_SIZE;
+ 656              		.loc 1 563 0
+ 657 00ea EB69     		ldr	r3, [r5, #28]
+ 658 00ec 1833     		adds	r3, r3, #24
+ 659 00ee EB61     		str	r3, [r5, #28]
+ 564:rt_thread/src/memheap.c **** 
+ 565:rt_thread/src/memheap.c ****         /* merge block with next neighbor. */
+ 566:rt_thread/src/memheap.c ****         new_ptr = header_ptr->next;
+ 660              		.loc 1 566 0
+ 661 00f0 B368     		ldr	r3, [r6, #8]
+ 662              	.LVL76:
+ 567:rt_thread/src/memheap.c **** 
+ 568:rt_thread/src/memheap.c ****         RT_DEBUG_LOG(RT_DEBUG_MEMHEAP,
+ 569:rt_thread/src/memheap.c ****                      ("merge: right node 0x%08x, next_free 0x%08x, prev_free 0x%08x\n",
+ 570:rt_thread/src/memheap.c ****                       new_ptr, new_ptr->next_free, new_ptr->prev_free));
+ 571:rt_thread/src/memheap.c **** 
+ 572:rt_thread/src/memheap.c ****         new_ptr->next->prev = header_ptr;
+ 663              		.loc 1 572 0
+ 664 00f2 9968     		ldr	r1, [r3, #8]
+ 665 00f4 CE60     		str	r6, [r1, #12]
+ 573:rt_thread/src/memheap.c ****         header_ptr->next    = new_ptr->next;
+ 666              		.loc 1 573 0
+ 667 00f6 9968     		ldr	r1, [r3, #8]
+ 668 00f8 B160     		str	r1, [r6, #8]
+ 574:rt_thread/src/memheap.c **** 
+ 575:rt_thread/src/memheap.c ****         /* remove new ptr from free list */
+ 576:rt_thread/src/memheap.c ****         new_ptr->next_free->prev_free = new_ptr->prev_free;
+ 669              		.loc 1 576 0
+ 670 00fa 1969     		ldr	r1, [r3, #16]
+ 671 00fc 5869     		ldr	r0, [r3, #20]
+ 672              	.LVL77:
+ 673 00fe 4861     		str	r0, [r1, #20]
+ 577:rt_thread/src/memheap.c ****         new_ptr->prev_free->next_free = new_ptr->next_free;
+ 674              		.loc 1 577 0
+ 675 0100 5969     		ldr	r1, [r3, #20]
+ 676 0102 1B69     		ldr	r3, [r3, #16]
+ARM GAS  /tmp/cc1FmEdk.s 			page 23
+
+
+ 677              	.LVL78:
+ 678 0104 0B61     		str	r3, [r1, #16]
+ 679              	.L41:
+ 578:rt_thread/src/memheap.c ****     }
+ 579:rt_thread/src/memheap.c **** 
+ 580:rt_thread/src/memheap.c ****     if (insert_header)
+ 680              		.loc 1 580 0
+ 681 0106 4AB1     		cbz	r2, .L42
+ 581:rt_thread/src/memheap.c ****     {
+ 582:rt_thread/src/memheap.c ****         /* no left merge, insert to free list */
+ 583:rt_thread/src/memheap.c ****         header_ptr->next_free = heap->free_list->next_free;
+ 682              		.loc 1 583 0
+ 683 0108 AB6A     		ldr	r3, [r5, #40]
+ 684 010a 1B69     		ldr	r3, [r3, #16]
+ 685 010c 3361     		str	r3, [r6, #16]
+ 584:rt_thread/src/memheap.c ****         header_ptr->prev_free = heap->free_list;
+ 686              		.loc 1 584 0
+ 687 010e AB6A     		ldr	r3, [r5, #40]
+ 688 0110 7361     		str	r3, [r6, #20]
+ 585:rt_thread/src/memheap.c ****         heap->free_list->next_free->prev_free = header_ptr;
+ 689              		.loc 1 585 0
+ 690 0112 AB6A     		ldr	r3, [r5, #40]
+ 691 0114 1B69     		ldr	r3, [r3, #16]
+ 692 0116 5E61     		str	r6, [r3, #20]
+ 586:rt_thread/src/memheap.c ****         heap->free_list->next_free            = header_ptr;
+ 693              		.loc 1 586 0
+ 694 0118 AB6A     		ldr	r3, [r5, #40]
+ 695 011a 1E61     		str	r6, [r3, #16]
+ 696              	.L42:
+ 587:rt_thread/src/memheap.c **** 
+ 588:rt_thread/src/memheap.c ****         RT_DEBUG_LOG(RT_DEBUG_MEMHEAP,
+ 589:rt_thread/src/memheap.c ****                      ("insert to free list: next_free 0x%08x, prev_free 0x%08x\n",
+ 590:rt_thread/src/memheap.c ****                       header_ptr->next_free, header_ptr->prev_free));
+ 591:rt_thread/src/memheap.c ****     }
+ 592:rt_thread/src/memheap.c **** 
+ 593:rt_thread/src/memheap.c ****     /* release lock */
+ 594:rt_thread/src/memheap.c ****     rt_sem_release(&(heap->lock));
+ 697              		.loc 1 594 0
+ 698 011c 3846     		mov	r0, r7
+ 699 011e FFF7FEFF 		bl	rt_sem_release
+ 700              	.LVL79:
+ 701 0122 F8BD     		pop	{r3, r4, r5, r6, r7, pc}
+ 702              	.LVL80:
+ 703              	.L45:
+ 704              	.LCFI4:
+ 705              		.cfi_def_cfa_offset 0
+ 706              		.cfi_restore 3
+ 707              		.cfi_restore 4
+ 708              		.cfi_restore 5
+ 709              		.cfi_restore 6
+ 710              		.cfi_restore 7
+ 711              		.cfi_restore 14
+ 712 0124 7047     		bx	lr
+ 713              	.L47:
+ 714 0126 00BF     		.align	2
+ 715              	.L46:
+ 716 0128 A01EA01E 		.word	513810080
+ARM GAS  /tmp/cc1FmEdk.s 			page 24
+
+
+ 717 012c 00000000 		.word	.LANCHOR3
+ 718 0130 98000000 		.word	.LC5
+ 719 0134 D4000000 		.word	.LC6
+ 720 0138 F8000000 		.word	.LC7
+ 721 013c 14000000 		.word	.LC1
+ 722 0140 1C000000 		.word	.LC2
+ 723              		.cfi_endproc
+ 724              	.LFE19:
+ 726              		.section	.text.rt_memheap_realloc,"ax",%progbits
+ 727              		.align	2
+ 728              		.global	rt_memheap_realloc
+ 729              		.thumb
+ 730              		.thumb_func
+ 732              	rt_memheap_realloc:
+ 733              	.LFB18:
+ 285:rt_thread/src/memheap.c ****     rt_err_t result;
+ 734              		.loc 1 285 0
+ 735              		.cfi_startproc
+ 736              		@ args = 0, pretend = 0, frame = 0
+ 737              		@ frame_needed = 0, uses_anonymous_args = 0
+ 738              	.LVL81:
+ 739 0000 2DE9F84F 		push	{r3, r4, r5, r6, r7, r8, r9, r10, fp, lr}
+ 740              	.LCFI5:
+ 741              		.cfi_def_cfa_offset 40
+ 742              		.cfi_offset 3, -40
+ 743              		.cfi_offset 4, -36
+ 744              		.cfi_offset 5, -32
+ 745              		.cfi_offset 6, -28
+ 746              		.cfi_offset 7, -24
+ 747              		.cfi_offset 8, -20
+ 748              		.cfi_offset 9, -16
+ 749              		.cfi_offset 10, -12
+ 750              		.cfi_offset 11, -8
+ 751              		.cfi_offset 14, -4
+ 752 0004 0E46     		mov	r6, r1
+ 753 0006 1446     		mov	r4, r2
+ 291:rt_thread/src/memheap.c ****     RT_ASSERT(rt_object_get_type(&heap->parent) == RT_Object_Class_MemHeap);
+ 754              		.loc 1 291 0
+ 755 0008 0746     		mov	r7, r0
+ 756 000a 28B9     		cbnz	r0, .L49
+ 291:rt_thread/src/memheap.c ****     RT_ASSERT(rt_object_get_type(&heap->parent) == RT_Object_Class_MemHeap);
+ 757              		.loc 1 291 0 is_stmt 0 discriminator 1
+ 758 000c 40F22312 		movw	r2, #291
+ 759              	.LVL82:
+ 760 0010 8049     		ldr	r1, .L67
+ 761              	.LVL83:
+ 762 0012 8148     		ldr	r0, .L67+4
+ 763              	.LVL84:
+ 764 0014 FFF7FEFF 		bl	rt_assert_handler
+ 765              	.LVL85:
+ 766              	.L49:
+ 292:rt_thread/src/memheap.c **** 
+ 767              		.loc 1 292 0 is_stmt 1
+ 768 0018 3846     		mov	r0, r7
+ 769 001a FFF7FEFF 		bl	rt_object_get_type
+ 770              	.LVL86:
+ 771 001e 0728     		cmp	r0, #7
+ARM GAS  /tmp/cc1FmEdk.s 			page 25
+
+
+ 772 0020 05D0     		beq	.L50
+ 292:rt_thread/src/memheap.c **** 
+ 773              		.loc 1 292 0 is_stmt 0 discriminator 1
+ 774 0022 4FF49272 		mov	r2, #292
+ 775 0026 7B49     		ldr	r1, .L67
+ 776 0028 7C48     		ldr	r0, .L67+8
+ 777 002a FFF7FEFF 		bl	rt_assert_handler
+ 778              	.LVL87:
+ 779              	.L50:
+ 294:rt_thread/src/memheap.c ****     {
+ 780              		.loc 1 294 0 is_stmt 1
+ 781 002e 2CB9     		cbnz	r4, .L51
+ 296:rt_thread/src/memheap.c **** 
+ 782              		.loc 1 296 0
+ 783 0030 3046     		mov	r0, r6
+ 784 0032 FFF7FEFF 		bl	rt_memheap_free
+ 785              	.LVL88:
+ 298:rt_thread/src/memheap.c ****     }
+ 786              		.loc 1 298 0
+ 787 0036 0020     		movs	r0, #0
+ 788 0038 BDE8F88F 		pop	{r3, r4, r5, r6, r7, r8, r9, r10, fp, pc}
+ 789              	.LVL89:
+ 790              	.L51:
+ 301:rt_thread/src/memheap.c ****     if (newsize < RT_MEMHEAP_MINIALLOC)
+ 791              		.loc 1 301 0
+ 792 003c 0334     		adds	r4, r4, #3
+ 793              	.LVL90:
+ 794 003e 24F00304 		bic	r4, r4, #3
+ 795              	.LVL91:
+ 302:rt_thread/src/memheap.c ****         newsize = RT_MEMHEAP_MINIALLOC;
+ 796              		.loc 1 302 0
+ 797 0042 0B2C     		cmp	r4, #11
+ 798 0044 00D8     		bhi	.L53
+ 303:rt_thread/src/memheap.c **** 
+ 799              		.loc 1 303 0
+ 800 0046 0C24     		movs	r4, #12
+ 801              	.LVL92:
+ 802              	.L53:
+ 305:rt_thread/src/memheap.c ****     {
+ 803              		.loc 1 305 0
+ 804 0048 2EB9     		cbnz	r6, .L54
+ 307:rt_thread/src/memheap.c ****     }
+ 805              		.loc 1 307 0
+ 806 004a 2146     		mov	r1, r4
+ 807 004c 3846     		mov	r0, r7
+ 808 004e FFF7FEFF 		bl	rt_memheap_alloc
+ 809              	.LVL93:
+ 810 0052 BDE8F88F 		pop	{r3, r4, r5, r6, r7, r8, r9, r10, fp, pc}
+ 811              	.LVL94:
+ 812              	.L54:
+ 311:rt_thread/src/memheap.c ****                  ((rt_uint8_t *)ptr - RT_MEMHEAP_SIZE);
+ 813              		.loc 1 311 0
+ 814 0056 A6F11808 		sub	r8, r6, #24
+ 815              	.LVL95:
+ 313:rt_thread/src/memheap.c ****     /* re-allocate memory */
+ 816              		.loc 1 313 0
+ 817 005a 56F8105C 		ldr	r5, [r6, #-16]
+ARM GAS  /tmp/cc1FmEdk.s 			page 26
+
+
+ 818 005e C8EB0505 		rsb	r5, r8, r5
+ 819 0062 183D     		subs	r5, r5, #24
+ 820              	.LVL96:
+ 315:rt_thread/src/memheap.c ****     {
+ 821              		.loc 1 315 0
+ 822 0064 AC42     		cmp	r4, r5
+ 823 0066 40F28380 		bls	.L55
+ 824              	.LBB3:
+ 321:rt_thread/src/memheap.c ****         if (result != RT_EOK)
+ 825              		.loc 1 321 0
+ 826 006a 07F1440B 		add	fp, r7, #68
+ 827 006e 4FF0FF31 		mov	r1, #-1
+ 828 0072 5846     		mov	r0, fp
+ 829 0074 FFF7FEFF 		bl	rt_sem_take
+ 830              	.LVL97:
+ 322:rt_thread/src/memheap.c ****         {
+ 831              		.loc 1 322 0
+ 832 0078 20B1     		cbz	r0, .L56
+ 324:rt_thread/src/memheap.c ****             return RT_NULL;
+ 833              		.loc 1 324 0
+ 834 007a FFF7FEFF 		bl	rt_set_errno
+ 835              	.LVL98:
+ 325:rt_thread/src/memheap.c ****         }
+ 836              		.loc 1 325 0
+ 837 007e 0020     		movs	r0, #0
+ 838 0080 BDE8F88F 		pop	{r3, r4, r5, r6, r7, r8, r9, r10, fp, pc}
+ 839              	.LVL99:
+ 840              	.L56:
+ 328:rt_thread/src/memheap.c **** 
+ 841              		.loc 1 328 0
+ 842 0084 56F8109C 		ldr	r9, [r6, #-16]
+ 843              	.LVL100:
+ 331:rt_thread/src/memheap.c **** 
+ 844              		.loc 1 331 0
+ 845 0088 C845     		cmp	r8, r9
+ 846 008a 05D3     		bcc	.L57
+ 331:rt_thread/src/memheap.c **** 
+ 847              		.loc 1 331 0 is_stmt 0 discriminator 1
+ 848 008c 40F24B12 		movw	r2, #331
+ 849 0090 6049     		ldr	r1, .L67
+ 850 0092 6348     		ldr	r0, .L67+12
+ 851              	.LVL101:
+ 852 0094 FFF7FEFF 		bl	rt_assert_handler
+ 853              	.LVL102:
+ 854              	.L57:
+ 334:rt_thread/src/memheap.c ****         {
+ 855              		.loc 1 334 0 is_stmt 1
+ 856 0098 D9F80030 		ldr	r3, [r9]
+ 857 009c 13F0010F 		tst	r3, #1
+ 858 00a0 4FD1     		bne	.L58
+ 859              	.LBB4:
+ 338:rt_thread/src/memheap.c ****             RT_ASSERT(next_ptr > 0);
+ 860              		.loc 1 338 0
+ 861 00a2 D9F80830 		ldr	r3, [r9, #8]
+ 862 00a6 C9EB0303 		rsb	r3, r9, r3
+ 863 00aa A3F1180A 		sub	r10, r3, #24
+ 864              	.LVL103:
+ARM GAS  /tmp/cc1FmEdk.s 			page 27
+
+
+ 339:rt_thread/src/memheap.c **** 
+ 865              		.loc 1 339 0
+ 866 00ae B9F1000F 		cmp	r9, #0
+ 867 00b2 05D1     		bne	.L59
+ 339:rt_thread/src/memheap.c **** 
+ 868              		.loc 1 339 0 is_stmt 0 discriminator 1
+ 869 00b4 40F25312 		movw	r2, #339
+ 870 00b8 5649     		ldr	r1, .L67
+ 871 00ba 5A48     		ldr	r0, .L67+16
+ 872 00bc FFF7FEFF 		bl	rt_assert_handler
+ 873              	.LVL104:
+ 874              	.L59:
+ 350:rt_thread/src/memheap.c ****             {
+ 875              		.loc 1 350 0 is_stmt 1
+ 876 00c0 AA44     		add	r10, r10, r5
+ 877              	.LVL105:
+ 878 00c2 04F10C03 		add	r3, r4, #12
+ 879 00c6 9A45     		cmp	r10, r3
+ 880 00c8 3BD9     		bls	.L58
+ 353:rt_thread/src/memheap.c ****                 if (heap->pool_size - heap->available_size > heap->max_used_size)
+ 881              		.loc 1 353 0
+ 882 00ca FB69     		ldr	r3, [r7, #28]
+ 883 00cc 2D1B     		subs	r5, r5, r4
+ 884              	.LVL106:
+ 885 00ce 1D44     		add	r5, r5, r3
+ 886 00d0 FD61     		str	r5, [r7, #28]
+ 354:rt_thread/src/memheap.c ****                     heap->max_used_size = heap->pool_size - heap->available_size;
+ 887              		.loc 1 354 0
+ 888 00d2 BB69     		ldr	r3, [r7, #24]
+ 889 00d4 5D1B     		subs	r5, r3, r5
+ 890 00d6 3B6A     		ldr	r3, [r7, #32]
+ 891 00d8 9D42     		cmp	r5, r3
+ 892 00da 00D9     		bls	.L60
+ 355:rt_thread/src/memheap.c **** 
+ 893              		.loc 1 355 0
+ 894 00dc 3D62     		str	r5, [r7, #32]
+ 895              	.L60:
+ 364:rt_thread/src/memheap.c ****                 next_ptr->prev_free->next_free = next_ptr->next_free;
+ 896              		.loc 1 364 0
+ 897 00de D9F81030 		ldr	r3, [r9, #16]
+ 898 00e2 D9F81420 		ldr	r2, [r9, #20]
+ 899 00e6 5A61     		str	r2, [r3, #20]
+ 365:rt_thread/src/memheap.c ****                 next_ptr->next->prev = next_ptr->prev;
+ 900              		.loc 1 365 0
+ 901 00e8 D9F81430 		ldr	r3, [r9, #20]
+ 902 00ec D9F81020 		ldr	r2, [r9, #16]
+ 903 00f0 1A61     		str	r2, [r3, #16]
+ 366:rt_thread/src/memheap.c ****                 next_ptr->prev->next = next_ptr->next;
+ 904              		.loc 1 366 0
+ 905 00f2 D9F80830 		ldr	r3, [r9, #8]
+ 906 00f6 D9F80C20 		ldr	r2, [r9, #12]
+ 907 00fa DA60     		str	r2, [r3, #12]
+ 367:rt_thread/src/memheap.c **** 
+ 908              		.loc 1 367 0
+ 909 00fc D9F80C30 		ldr	r3, [r9, #12]
+ 910 0100 D9F80820 		ldr	r2, [r9, #8]
+ 911 0104 9A60     		str	r2, [r3, #8]
+ARM GAS  /tmp/cc1FmEdk.s 			page 28
+
+
+ 370:rt_thread/src/memheap.c **** 
+ 912              		.loc 1 370 0
+ 913 0106 3319     		adds	r3, r6, r4
+ 914              	.LVL107:
+ 379:rt_thread/src/memheap.c **** 
+ 915              		.loc 1 379 0
+ 916 0108 474A     		ldr	r2, .L67+20
+ 917 010a 3251     		str	r2, [r6, r4]
+ 382:rt_thread/src/memheap.c **** 
+ 918              		.loc 1 382 0
+ 919 010c 5F60     		str	r7, [r3, #4]
+ 384:rt_thread/src/memheap.c ****                 next_ptr->next          = header_ptr->next;
+ 920              		.loc 1 384 0
+ 921 010e C3F80C80 		str	r8, [r3, #12]
+ 385:rt_thread/src/memheap.c ****                 header_ptr->next->prev = next_ptr;
+ 922              		.loc 1 385 0
+ 923 0112 56F8102C 		ldr	r2, [r6, #-16]
+ 924 0116 9A60     		str	r2, [r3, #8]
+ 386:rt_thread/src/memheap.c ****                 header_ptr->next       = next_ptr;
+ 925              		.loc 1 386 0
+ 926 0118 56F8102C 		ldr	r2, [r6, #-16]
+ 927 011c D360     		str	r3, [r2, #12]
+ 387:rt_thread/src/memheap.c **** 
+ 928              		.loc 1 387 0
+ 929 011e 46F8103C 		str	r3, [r6, #-16]
+ 390:rt_thread/src/memheap.c ****                 next_ptr->prev_free = heap->free_list;
+ 930              		.loc 1 390 0
+ 931 0122 BA6A     		ldr	r2, [r7, #40]
+ 932 0124 1269     		ldr	r2, [r2, #16]
+ 933 0126 1A61     		str	r2, [r3, #16]
+ 391:rt_thread/src/memheap.c ****                 heap->free_list->next_free->prev_free = next_ptr;
+ 934              		.loc 1 391 0
+ 935 0128 BA6A     		ldr	r2, [r7, #40]
+ 936 012a 5A61     		str	r2, [r3, #20]
+ 392:rt_thread/src/memheap.c ****                 heap->free_list->next_free            = next_ptr;
+ 937              		.loc 1 392 0
+ 938 012c BA6A     		ldr	r2, [r7, #40]
+ 939 012e 1269     		ldr	r2, [r2, #16]
+ 940 0130 5361     		str	r3, [r2, #20]
+ 393:rt_thread/src/memheap.c ****                 RT_DEBUG_LOG(RT_DEBUG_MEMHEAP, ("new ptr: next_free 0x%08x, prev_free 0x%08x",
+ 941              		.loc 1 393 0
+ 942 0132 BA6A     		ldr	r2, [r7, #40]
+ 943 0134 1361     		str	r3, [r2, #16]
+ 399:rt_thread/src/memheap.c **** 
+ 944              		.loc 1 399 0
+ 945 0136 5846     		mov	r0, fp
+ 946 0138 FFF7FEFF 		bl	rt_sem_release
+ 947              	.LVL108:
+ 401:rt_thread/src/memheap.c ****             }
+ 948              		.loc 1 401 0
+ 949 013c 3046     		mov	r0, r6
+ 950 013e BDE8F88F 		pop	{r3, r4, r5, r6, r7, r8, r9, r10, fp, pc}
+ 951              	.LVL109:
+ 952              	.L58:
+ 953              	.LBE4:
+ 406:rt_thread/src/memheap.c **** 
+ 954              		.loc 1 406 0
+ARM GAS  /tmp/cc1FmEdk.s 			page 29
+
+
+ 955 0142 5846     		mov	r0, fp
+ 956 0144 FFF7FEFF 		bl	rt_sem_release
+ 957              	.LVL110:
+ 409:rt_thread/src/memheap.c ****         if (new_ptr != RT_NULL)
+ 958              		.loc 1 409 0
+ 959 0148 2146     		mov	r1, r4
+ 960 014a 3846     		mov	r0, r7
+ 961 014c FFF7FEFF 		bl	rt_memheap_alloc
+ 962              	.LVL111:
+ 410:rt_thread/src/memheap.c ****         {
+ 963              		.loc 1 410 0
+ 964 0150 0746     		mov	r7, r0
+ 965              	.LVL112:
+ 966 0152 0028     		cmp	r0, #0
+ 967 0154 59D0     		beq	.L64
+ 412:rt_thread/src/memheap.c ****             rt_memheap_free(ptr);
+ 968              		.loc 1 412 0
+ 969 0156 2246     		mov	r2, r4
+ 970 0158 AC42     		cmp	r4, r5
+ 971 015a 28BF     		it	cs
+ 972 015c 2A46     		movcs	r2, r5
+ 973 015e 3146     		mov	r1, r6
+ 974 0160 FFF7FEFF 		bl	rt_memcpy
+ 975              	.LVL113:
+ 413:rt_thread/src/memheap.c ****         }
+ 976              		.loc 1 413 0
+ 977 0164 3046     		mov	r0, r6
+ 978 0166 FFF7FEFF 		bl	rt_memheap_free
+ 979              	.LVL114:
+ 416:rt_thread/src/memheap.c ****     }
+ 980              		.loc 1 416 0
+ 981 016a 3846     		mov	r0, r7
+ 982 016c BDE8F88F 		pop	{r3, r4, r5, r6, r7, r8, r9, r10, fp, pc}
+ 983              	.LVL115:
+ 984              	.L55:
+ 985              	.LBE3:
+ 420:rt_thread/src/memheap.c ****         return ptr;
+ 986              		.loc 1 420 0
+ 987 0170 04F12403 		add	r3, r4, #36
+ 988 0174 9D42     		cmp	r5, r3
+ 989 0176 4AD9     		bls	.L65
+ 424:rt_thread/src/memheap.c ****     if (result != RT_EOK)
+ 990              		.loc 1 424 0
+ 991 0178 07F14405 		add	r5, r7, #68
+ 992              	.LVL116:
+ 993 017c 4FF0FF31 		mov	r1, #-1
+ 994 0180 2846     		mov	r0, r5
+ 995 0182 FFF7FEFF 		bl	rt_sem_take
+ 996              	.LVL117:
+ 425:rt_thread/src/memheap.c ****     {
+ 997              		.loc 1 425 0
+ 998 0186 20B1     		cbz	r0, .L61
+ 427:rt_thread/src/memheap.c **** 
+ 999              		.loc 1 427 0
+ 1000 0188 FFF7FEFF 		bl	rt_set_errno
+ 1001              	.LVL118:
+ 429:rt_thread/src/memheap.c ****     }
+ARM GAS  /tmp/cc1FmEdk.s 			page 30
+
+
+ 1002              		.loc 1 429 0
+ 1003 018c 0020     		movs	r0, #0
+ 1004 018e BDE8F88F 		pop	{r3, r4, r5, r6, r7, r8, r9, r10, fp, pc}
+ 1005              	.LVL119:
+ 1006              	.L61:
+ 434:rt_thread/src/memheap.c **** 
+ 1007              		.loc 1 434 0
+ 1008 0192 1834     		adds	r4, r4, #24
+ 1009              	.LVL120:
+ 433:rt_thread/src/memheap.c ****               (((rt_uint8_t *)header_ptr) + newsize + RT_MEMHEAP_SIZE);
+ 1010              		.loc 1 433 0
+ 1011 0194 08EB0403 		add	r3, r8, r4
+ 1012              	.LVL121:
+ 444:rt_thread/src/memheap.c ****     /* put the pool pointer into the new block. */
+ 1013              		.loc 1 444 0
+ 1014 0198 234A     		ldr	r2, .L67+20
+ 1015 019a 48F80420 		str	r2, [r8, r4]
+ 446:rt_thread/src/memheap.c **** 
+ 1016              		.loc 1 446 0
+ 1017 019e 5F60     		str	r7, [r3, #4]
+ 449:rt_thread/src/memheap.c ****     new_ptr->next          = header_ptr->next;
+ 1018              		.loc 1 449 0
+ 1019 01a0 C3F80C80 		str	r8, [r3, #12]
+ 450:rt_thread/src/memheap.c ****     header_ptr->next->prev = new_ptr;
+ 1020              		.loc 1 450 0
+ 1021 01a4 56F8102C 		ldr	r2, [r6, #-16]
+ 1022 01a8 9A60     		str	r2, [r3, #8]
+ 451:rt_thread/src/memheap.c ****     header_ptr->next       = new_ptr;
+ 1023              		.loc 1 451 0
+ 1024 01aa 56F8102C 		ldr	r2, [r6, #-16]
+ 1025 01ae D360     		str	r3, [r2, #12]
+ 452:rt_thread/src/memheap.c **** 
+ 1026              		.loc 1 452 0
+ 1027 01b0 46F8103C 		str	r3, [r6, #-16]
+ 455:rt_thread/src/memheap.c ****     {
+ 1028              		.loc 1 455 0
+ 1029 01b4 9A68     		ldr	r2, [r3, #8]
+ 1030 01b6 1168     		ldr	r1, [r2]
+ 1031 01b8 11F0010F 		tst	r1, #1
+ 1032 01bc 0FD1     		bne	.L62
+ 1033              	.LVL122:
+ 1034              	.LBB5:
+ 461:rt_thread/src/memheap.c **** 
+ 1035              		.loc 1 461 0
+ 1036 01be F869     		ldr	r0, [r7, #28]
+ 1037              	.LVL123:
+ 1038 01c0 9168     		ldr	r1, [r2, #8]
+ 1039 01c2 511A     		subs	r1, r2, r1
+ 1040 01c4 0144     		add	r1, r1, r0
+ 1041 01c6 1831     		adds	r1, r1, #24
+ 1042 01c8 F961     		str	r1, [r7, #28]
+ 467:rt_thread/src/memheap.c ****         new_ptr->next   = free_ptr->next;
+ 1043              		.loc 1 467 0
+ 1044 01ca 9168     		ldr	r1, [r2, #8]
+ 1045 01cc CB60     		str	r3, [r1, #12]
+ 468:rt_thread/src/memheap.c **** 
+ 1046              		.loc 1 468 0
+ARM GAS  /tmp/cc1FmEdk.s 			page 31
+
+
+ 1047 01ce 9168     		ldr	r1, [r2, #8]
+ 1048 01d0 9960     		str	r1, [r3, #8]
+ 471:rt_thread/src/memheap.c ****         free_ptr->prev_free->next_free = free_ptr->next_free;
+ 1049              		.loc 1 471 0
+ 1050 01d2 1169     		ldr	r1, [r2, #16]
+ 1051 01d4 5069     		ldr	r0, [r2, #20]
+ 1052 01d6 4861     		str	r0, [r1, #20]
+ 472:rt_thread/src/memheap.c ****     }
+ 1053              		.loc 1 472 0
+ 1054 01d8 5169     		ldr	r1, [r2, #20]
+ 1055 01da 1269     		ldr	r2, [r2, #16]
+ 1056              	.LVL124:
+ 1057 01dc 0A61     		str	r2, [r1, #16]
+ 1058              	.L62:
+ 1059              	.LBE5:
+ 476:rt_thread/src/memheap.c ****     new_ptr->prev_free = heap->free_list;
+ 1060              		.loc 1 476 0
+ 1061 01de BA6A     		ldr	r2, [r7, #40]
+ 1062 01e0 1269     		ldr	r2, [r2, #16]
+ 1063 01e2 1A61     		str	r2, [r3, #16]
+ 477:rt_thread/src/memheap.c ****     heap->free_list->next_free->prev_free = new_ptr;
+ 1064              		.loc 1 477 0
+ 1065 01e4 BA6A     		ldr	r2, [r7, #40]
+ 1066 01e6 5A61     		str	r2, [r3, #20]
+ 478:rt_thread/src/memheap.c ****     heap->free_list->next_free            = new_ptr;
+ 1067              		.loc 1 478 0
+ 1068 01e8 BA6A     		ldr	r2, [r7, #40]
+ 1069 01ea 1269     		ldr	r2, [r2, #16]
+ 1070 01ec 5361     		str	r3, [r2, #20]
+ 479:rt_thread/src/memheap.c ****     RT_DEBUG_LOG(RT_DEBUG_MEMHEAP, ("new free ptr: next_free 0x%08x, prev_free 0x%08x\n",
+ 1071              		.loc 1 479 0
+ 1072 01ee BA6A     		ldr	r2, [r7, #40]
+ 1073 01f0 1361     		str	r3, [r2, #16]
+ 485:rt_thread/src/memheap.c **** 
+ 1074              		.loc 1 485 0
+ 1075 01f2 F969     		ldr	r1, [r7, #28]
+ 1076 01f4 9A68     		ldr	r2, [r3, #8]
+ 1077 01f6 D31A     		subs	r3, r2, r3
+ 1078              	.LVL125:
+ 1079 01f8 0B44     		add	r3, r3, r1
+ 1080 01fa 183B     		subs	r3, r3, #24
+ 1081 01fc FB61     		str	r3, [r7, #28]
+ 488:rt_thread/src/memheap.c **** 
+ 1082              		.loc 1 488 0
+ 1083 01fe 2846     		mov	r0, r5
+ 1084 0200 FFF7FEFF 		bl	rt_sem_release
+ 1085              	.LVL126:
+ 491:rt_thread/src/memheap.c **** }
+ 1086              		.loc 1 491 0
+ 1087 0204 3046     		mov	r0, r6
+ 1088 0206 BDE8F88F 		pop	{r3, r4, r5, r6, r7, r8, r9, r10, fp, pc}
+ 1089              	.LVL127:
+ 1090              	.L64:
+ 1091 020a BDE8F88F 		pop	{r3, r4, r5, r6, r7, r8, r9, r10, fp, pc}
+ 1092              	.LVL128:
+ 1093              	.L65:
+ 421:rt_thread/src/memheap.c **** 
+ARM GAS  /tmp/cc1FmEdk.s 			page 32
+
+
+ 1094              		.loc 1 421 0
+ 1095 020e 3046     		mov	r0, r6
+ 492:rt_thread/src/memheap.c **** RTM_EXPORT(rt_memheap_realloc);
+ 1096              		.loc 1 492 0
+ 1097 0210 BDE8F88F 		pop	{r3, r4, r5, r6, r7, r8, r9, r10, fp, pc}
+ 1098              	.LVL129:
+ 1099              	.L68:
+ 1100              		.align	2
+ 1101              	.L67:
+ 1102 0214 00000000 		.word	.LANCHOR4
+ 1103 0218 14000000 		.word	.LC1
+ 1104 021c 1C000000 		.word	.LC2
+ 1105 0220 38010000 		.word	.LC8
+ 1106 0224 50010000 		.word	.LC9
+ 1107 0228 A01EA01E 		.word	513810080
+ 1108              		.cfi_endproc
+ 1109              	.LFE18:
+ 1111              		.section	.rodata.__FUNCTION__.5317,"a",%progbits
+ 1112              		.align	2
+ 1113              		.set	.LANCHOR2,. + 0
+ 1116              	__FUNCTION__.5317:
+ 1117 0000 72745F6D 		.ascii	"rt_memheap_alloc\000"
+ 1117      656D6865 
+ 1117      61705F61 
+ 1117      6C6C6F63 
+ 1117      00
+ 1118              		.section	.rodata.__FUNCTION__.5305,"a",%progbits
+ 1119              		.align	2
+ 1120              		.set	.LANCHOR0,. + 0
+ 1123              	__FUNCTION__.5305:
+ 1124 0000 72745F6D 		.ascii	"rt_memheap_init\000"
+ 1124      656D6865 
+ 1124      61705F69 
+ 1124      6E697400 
+ 1125              		.section	.rodata.__FUNCTION__.5309,"a",%progbits
+ 1126              		.align	2
+ 1127              		.set	.LANCHOR1,. + 0
+ 1130              	__FUNCTION__.5309:
+ 1131 0000 72745F6D 		.ascii	"rt_memheap_detach\000"
+ 1131      656D6865 
+ 1131      61705F64 
+ 1131      65746163 
+ 1131      6800
+ 1132              		.section	.rodata.str1.4,"aMS",%progbits,1
+ 1133              		.align	2
+ 1134              	.LC0:
+ 1135 0000 6D656D68 		.ascii	"memheap != RT_NULL\000"
+ 1135      65617020 
+ 1135      213D2052 
+ 1135      545F4E55 
+ 1135      4C4C00
+ 1136 0013 00       		.space	1
+ 1137              	.LC1:
+ 1138 0014 68656170 		.ascii	"heap\000"
+ 1138      00
+ 1139 0019 000000   		.space	3
+ 1140              	.LC2:
+ARM GAS  /tmp/cc1FmEdk.s 			page 33
+
+
+ 1141 001c 72745F6F 		.ascii	"rt_object_get_type(&heap->parent) == RT_Object_Clas"
+ 1141      626A6563 
+ 1141      745F6765 
+ 1141      745F7479 
+ 1141      70652826 
+ 1142 004f 735F4D65 		.ascii	"s_MemHeap\000"
+ 1142      6D486561 
+ 1142      7000
+ 1143 0059 000000   		.space	3
+ 1144              	.LC3:
+ 1145 005c 72745F6F 		.ascii	"rt_object_is_systemobject(&heap->parent)\000"
+ 1145      626A6563 
+ 1145      745F6973 
+ 1145      5F737973 
+ 1145      74656D6F 
+ 1146 0085 000000   		.space	3
+ 1147              	.LC4:
+ 1148 0088 68656170 		.ascii	"heap != RT_NULL\000"
+ 1148      20213D20 
+ 1148      52545F4E 
+ 1148      554C4C00 
+ 1149              	.LC5:
+ 1150 0098 28686561 		.ascii	"(header_ptr->magic & RT_MEMHEAP_MASK) == RT_MEMHEAP"
+ 1150      6465725F 
+ 1150      7074722D 
+ 1150      3E6D6167 
+ 1150      69632026 
+ 1151 00cb 5F4D4147 		.ascii	"_MAGIC\000"
+ 1151      494300
+ 1152 00d2 0000     		.space	2
+ 1153              	.LC6:
+ 1154 00d4 68656164 		.ascii	"header_ptr->magic & RT_MEMHEAP_USED\000"
+ 1154      65725F70 
+ 1154      74722D3E 
+ 1154      6D616769 
+ 1154      63202620 
+ 1155              	.LC7:
+ 1156 00f8 28686561 		.ascii	"(header_ptr->next->magic & RT_MEMHEAP_MASK) == RT_M"
+ 1156      6465725F 
+ 1156      7074722D 
+ 1156      3E6E6578 
+ 1156      742D3E6D 
+ 1157 012b 454D4845 		.ascii	"EMHEAP_MAGIC\000"
+ 1157      41505F4D 
+ 1157      41474943 
+ 1157      00
+ 1158              	.LC8:
+ 1159 0138 6E657874 		.ascii	"next_ptr > header_ptr\000"
+ 1159      5F707472 
+ 1159      203E2068 
+ 1159      65616465 
+ 1159      725F7074 
+ 1160 014e 0000     		.space	2
+ 1161              	.LC9:
+ 1162 0150 6E657874 		.ascii	"next_ptr > 0\000"
+ 1162      5F707472 
+ 1162      203E2030 
+ARM GAS  /tmp/cc1FmEdk.s 			page 34
+
+
+ 1162      00
+ 1163              		.section	.rodata.__FUNCTION__.5331,"a",%progbits
+ 1164              		.align	2
+ 1165              		.set	.LANCHOR4,. + 0
+ 1168              	__FUNCTION__.5331:
+ 1169 0000 72745F6D 		.ascii	"rt_memheap_realloc\000"
+ 1169      656D6865 
+ 1169      61705F72 
+ 1169      65616C6C 
+ 1169      6F6300
+ 1170              		.section	.rodata.__FUNCTION__.5344,"a",%progbits
+ 1171              		.align	2
+ 1172              		.set	.LANCHOR3,. + 0
+ 1175              	__FUNCTION__.5344:
+ 1176 0000 72745F6D 		.ascii	"rt_memheap_free\000"
+ 1176      656D6865 
+ 1176      61705F66 
+ 1176      72656500 
+ 1177              		.text
+ 1178              	.Letext0:
+ 1179              		.file 2 "rt_thread/include/rtdef.h"
+ 1180              		.file 3 "rt_thread/include/rtthread.h"
+ARM GAS  /tmp/cc1FmEdk.s 			page 35
+
+
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 memheap.c
+     /tmp/cc1FmEdk.s:20     .text.rt_memheap_init:0000000000000000 $t
+     /tmp/cc1FmEdk.s:25     .text.rt_memheap_init:0000000000000000 rt_memheap_init
+     /tmp/cc1FmEdk.s:163    .text.rt_memheap_init:0000000000000094 $d
+     /tmp/cc1FmEdk.s:170    .text.rt_memheap_detach:0000000000000000 $t
+     /tmp/cc1FmEdk.s:175    .text.rt_memheap_detach:0000000000000000 rt_memheap_detach
+     /tmp/cc1FmEdk.s:238    .text.rt_memheap_detach:0000000000000048 $d
+     /tmp/cc1FmEdk.s:246    .text.rt_memheap_alloc:0000000000000000 $t
+     /tmp/cc1FmEdk.s:251    .text.rt_memheap_alloc:0000000000000000 rt_memheap_alloc
+     /tmp/cc1FmEdk.s:496    .text.rt_memheap_alloc:0000000000000114 $d
+     /tmp/cc1FmEdk.s:504    .text.rt_memheap_free:0000000000000000 $t
+     /tmp/cc1FmEdk.s:509    .text.rt_memheap_free:0000000000000000 rt_memheap_free
+     /tmp/cc1FmEdk.s:716    .text.rt_memheap_free:0000000000000128 $d
+     /tmp/cc1FmEdk.s:727    .text.rt_memheap_realloc:0000000000000000 $t
+     /tmp/cc1FmEdk.s:732    .text.rt_memheap_realloc:0000000000000000 rt_memheap_realloc
+     /tmp/cc1FmEdk.s:1102   .text.rt_memheap_realloc:0000000000000214 $d
+     /tmp/cc1FmEdk.s:1112   .rodata.__FUNCTION__.5317:0000000000000000 $d
+     /tmp/cc1FmEdk.s:1116   .rodata.__FUNCTION__.5317:0000000000000000 __FUNCTION__.5317
+     /tmp/cc1FmEdk.s:1119   .rodata.__FUNCTION__.5305:0000000000000000 $d
+     /tmp/cc1FmEdk.s:1123   .rodata.__FUNCTION__.5305:0000000000000000 __FUNCTION__.5305
+     /tmp/cc1FmEdk.s:1126   .rodata.__FUNCTION__.5309:0000000000000000 $d
+     /tmp/cc1FmEdk.s:1130   .rodata.__FUNCTION__.5309:0000000000000000 __FUNCTION__.5309
+     /tmp/cc1FmEdk.s:1133   .rodata.str1.4:0000000000000000 $d
+     /tmp/cc1FmEdk.s:1164   .rodata.__FUNCTION__.5331:0000000000000000 $d
+     /tmp/cc1FmEdk.s:1168   .rodata.__FUNCTION__.5331:0000000000000000 __FUNCTION__.5331
+     /tmp/cc1FmEdk.s:1171   .rodata.__FUNCTION__.5344:0000000000000000 $d
+     /tmp/cc1FmEdk.s:1175   .rodata.__FUNCTION__.5344:0000000000000000 __FUNCTION__.5344
+                     .debug_frame:0000000000000010 $d
+
+UNDEFINED SYMBOLS
+rt_assert_handler
+rt_object_init
+rt_sem_init
+rt_object_get_type
+rt_object_is_systemobject
+rt_object_detach
+rt_sem_take
+rt_set_errno
+rt_sem_release
+rt_memcpy

@@ -1,0 +1,380 @@
+ARM GAS  /tmp/ccCSUlE2.s 			page 1
+
+
+   1              		.syntax unified
+   2              		.cpu cortex-m3
+   3              		.fpu softvfp
+   4              		.eabi_attribute 20, 1
+   5              		.eabi_attribute 21, 1
+   6              		.eabi_attribute 23, 3
+   7              		.eabi_attribute 24, 1
+   8              		.eabi_attribute 25, 1
+   9              		.eabi_attribute 26, 1
+  10              		.eabi_attribute 30, 1
+  11              		.eabi_attribute 34, 1
+  12              		.eabi_attribute 18, 4
+  13              		.thumb
+  14              		.syntax unified
+  15              		.file	"clock.c"
+  16              		.text
+  17              	.Ltext0:
+  18              		.cfi_sections	.debug_frame
+  19              		.section	.text.rt_system_tick_init,"ax",%progbits
+  20              		.align	2
+  21              		.global	rt_system_tick_init
+  22              		.thumb
+  23              		.thumb_func
+  25              	rt_system_tick_init:
+  26              	.LFB15:
+  27              		.file 1 "rt_thread/src/clock.c"
+   1:rt_thread/src/clock.c **** /*
+   2:rt_thread/src/clock.c ****  * Copyright (c) 2006-2018, RT-Thread Development Team
+   3:rt_thread/src/clock.c ****  *
+   4:rt_thread/src/clock.c ****  * SPDX-License-Identifier: Apache-2.0
+   5:rt_thread/src/clock.c ****  *
+   6:rt_thread/src/clock.c ****  * Change Logs:
+   7:rt_thread/src/clock.c ****  * Date           Author       Notes
+   8:rt_thread/src/clock.c ****  * 2006-03-12     Bernard      first version
+   9:rt_thread/src/clock.c ****  * 2006-05-27     Bernard      add support for same priority thread schedule
+  10:rt_thread/src/clock.c ****  * 2006-08-10     Bernard      remove the last rt_schedule in rt_tick_increase
+  11:rt_thread/src/clock.c ****  * 2010-03-08     Bernard      remove rt_passed_second
+  12:rt_thread/src/clock.c ****  * 2010-05-20     Bernard      fix the tick exceeds the maximum limits
+  13:rt_thread/src/clock.c ****  * 2010-07-13     Bernard      fix rt_tick_from_millisecond issue found by kuronca
+  14:rt_thread/src/clock.c ****  * 2011-06-26     Bernard      add rt_tick_set function.
+  15:rt_thread/src/clock.c ****  */
+  16:rt_thread/src/clock.c **** 
+  17:rt_thread/src/clock.c **** #include <rthw.h>
+  18:rt_thread/src/clock.c **** #include <rtthread.h>
+  19:rt_thread/src/clock.c **** 
+  20:rt_thread/src/clock.c **** static rt_tick_t rt_tick = 0;
+  21:rt_thread/src/clock.c **** 
+  22:rt_thread/src/clock.c **** /**
+  23:rt_thread/src/clock.c ****  * This function will initialize system tick and set it to zero.
+  24:rt_thread/src/clock.c ****  * @ingroup SystemInit
+  25:rt_thread/src/clock.c ****  *
+  26:rt_thread/src/clock.c ****  * @deprecated since 1.1.0, this function does not need to be invoked
+  27:rt_thread/src/clock.c ****  * in the system initialization.
+  28:rt_thread/src/clock.c ****  */
+  29:rt_thread/src/clock.c **** void rt_system_tick_init(void)
+  30:rt_thread/src/clock.c **** {
+  28              		.loc 1 30 0
+ARM GAS  /tmp/ccCSUlE2.s 			page 2
+
+
+  29              		.cfi_startproc
+  30              		@ args = 0, pretend = 0, frame = 0
+  31              		@ frame_needed = 0, uses_anonymous_args = 0
+  32              		@ link register save eliminated.
+  33 0000 7047     		bx	lr
+  34              		.cfi_endproc
+  35              	.LFE15:
+  37 0002 00BF     		.section	.text.rt_tick_get,"ax",%progbits
+  38              		.align	2
+  39              		.global	rt_tick_get
+  40              		.thumb
+  41              		.thumb_func
+  43              	rt_tick_get:
+  44              	.LFB16:
+  31:rt_thread/src/clock.c **** }
+  32:rt_thread/src/clock.c **** 
+  33:rt_thread/src/clock.c **** /**
+  34:rt_thread/src/clock.c ****  * @addtogroup Clock
+  35:rt_thread/src/clock.c ****  */
+  36:rt_thread/src/clock.c **** 
+  37:rt_thread/src/clock.c **** /**@{*/
+  38:rt_thread/src/clock.c **** 
+  39:rt_thread/src/clock.c **** /**
+  40:rt_thread/src/clock.c ****  * This function will return current tick from operating system startup
+  41:rt_thread/src/clock.c ****  *
+  42:rt_thread/src/clock.c ****  * @return current tick
+  43:rt_thread/src/clock.c ****  */
+  44:rt_thread/src/clock.c **** rt_tick_t rt_tick_get(void)
+  45:rt_thread/src/clock.c **** {
+  45              		.loc 1 45 0
+  46              		.cfi_startproc
+  47              		@ args = 0, pretend = 0, frame = 0
+  48              		@ frame_needed = 0, uses_anonymous_args = 0
+  49              		@ link register save eliminated.
+  46:rt_thread/src/clock.c ****     /* return the global tick */
+  47:rt_thread/src/clock.c ****     return rt_tick;
+  48:rt_thread/src/clock.c **** }
+  50              		.loc 1 48 0
+  51 0000 014B     		ldr	r3, .L3
+  52 0002 1868     		ldr	r0, [r3]
+  53 0004 7047     		bx	lr
+  54              	.L4:
+  55 0006 00BF     		.align	2
+  56              	.L3:
+  57 0008 00000000 		.word	.LANCHOR0
+  58              		.cfi_endproc
+  59              	.LFE16:
+  61              		.section	.text.rt_tick_set,"ax",%progbits
+  62              		.align	2
+  63              		.global	rt_tick_set
+  64              		.thumb
+  65              		.thumb_func
+  67              	rt_tick_set:
+  68              	.LFB17:
+  49:rt_thread/src/clock.c **** RTM_EXPORT(rt_tick_get);
+  50:rt_thread/src/clock.c **** 
+  51:rt_thread/src/clock.c **** /**
+ARM GAS  /tmp/ccCSUlE2.s 			page 3
+
+
+  52:rt_thread/src/clock.c ****  * This function will set current tick
+  53:rt_thread/src/clock.c ****  */
+  54:rt_thread/src/clock.c **** void rt_tick_set(rt_tick_t tick)
+  55:rt_thread/src/clock.c **** {
+  69              		.loc 1 55 0
+  70              		.cfi_startproc
+  71              		@ args = 0, pretend = 0, frame = 0
+  72              		@ frame_needed = 0, uses_anonymous_args = 0
+  73              	.LVL0:
+  74 0000 10B5     		push	{r4, lr}
+  75              	.LCFI0:
+  76              		.cfi_def_cfa_offset 8
+  77              		.cfi_offset 4, -8
+  78              		.cfi_offset 14, -4
+  79 0002 0446     		mov	r4, r0
+  56:rt_thread/src/clock.c ****     rt_base_t level;
+  57:rt_thread/src/clock.c **** 
+  58:rt_thread/src/clock.c ****     level = rt_hw_interrupt_disable();
+  80              		.loc 1 58 0
+  81 0004 FFF7FEFF 		bl	rt_hw_interrupt_disable
+  82              	.LVL1:
+  59:rt_thread/src/clock.c ****     rt_tick = tick;
+  83              		.loc 1 59 0
+  84 0008 024B     		ldr	r3, .L7
+  85 000a 1C60     		str	r4, [r3]
+  60:rt_thread/src/clock.c ****     rt_hw_interrupt_enable(level);
+  86              		.loc 1 60 0
+  87 000c FFF7FEFF 		bl	rt_hw_interrupt_enable
+  88              	.LVL2:
+  89 0010 10BD     		pop	{r4, pc}
+  90              	.LVL3:
+  91              	.L8:
+  92 0012 00BF     		.align	2
+  93              	.L7:
+  94 0014 00000000 		.word	.LANCHOR0
+  95              		.cfi_endproc
+  96              	.LFE17:
+  98              		.section	.text.rt_tick_increase,"ax",%progbits
+  99              		.align	2
+ 100              		.global	rt_tick_increase
+ 101              		.thumb
+ 102              		.thumb_func
+ 104              	rt_tick_increase:
+ 105              	.LFB18:
+  61:rt_thread/src/clock.c **** }
+  62:rt_thread/src/clock.c **** 
+  63:rt_thread/src/clock.c **** /**
+  64:rt_thread/src/clock.c ****  * This function will notify kernel there is one tick passed. Normally,
+  65:rt_thread/src/clock.c ****  * this function is invoked by clock ISR.
+  66:rt_thread/src/clock.c ****  */
+  67:rt_thread/src/clock.c **** void rt_tick_increase(void)
+  68:rt_thread/src/clock.c **** {
+ 106              		.loc 1 68 0
+ 107              		.cfi_startproc
+ 108              		@ args = 0, pretend = 0, frame = 0
+ 109              		@ frame_needed = 0, uses_anonymous_args = 0
+ 110 0000 08B5     		push	{r3, lr}
+ARM GAS  /tmp/ccCSUlE2.s 			page 4
+
+
+ 111              	.LCFI1:
+ 112              		.cfi_def_cfa_offset 8
+ 113              		.cfi_offset 3, -8
+ 114              		.cfi_offset 14, -4
+  69:rt_thread/src/clock.c ****     struct rt_thread *thread;
+  70:rt_thread/src/clock.c **** 
+  71:rt_thread/src/clock.c ****     /* increase the global tick */
+  72:rt_thread/src/clock.c ****     ++ rt_tick;
+ 115              		.loc 1 72 0
+ 116 0002 084A     		ldr	r2, .L12
+ 117 0004 1368     		ldr	r3, [r2]
+ 118 0006 0133     		adds	r3, r3, #1
+ 119 0008 1360     		str	r3, [r2]
+  73:rt_thread/src/clock.c **** 
+  74:rt_thread/src/clock.c ****     /* check time slice */
+  75:rt_thread/src/clock.c ****     thread = rt_thread_self();
+ 120              		.loc 1 75 0
+ 121 000a FFF7FEFF 		bl	rt_thread_self
+ 122              	.LVL4:
+  76:rt_thread/src/clock.c **** 
+  77:rt_thread/src/clock.c ****     -- thread->remaining_tick;
+ 123              		.loc 1 77 0
+ 124 000e C36D     		ldr	r3, [r0, #92]
+ 125 0010 013B     		subs	r3, r3, #1
+ 126 0012 C365     		str	r3, [r0, #92]
+  78:rt_thread/src/clock.c ****     if (thread->remaining_tick == 0)
+ 127              		.loc 1 78 0
+ 128 0014 1BB9     		cbnz	r3, .L10
+  79:rt_thread/src/clock.c ****     {
+  80:rt_thread/src/clock.c ****         /* change to initialized tick */
+  81:rt_thread/src/clock.c ****         thread->remaining_tick = thread->init_tick;
+ 129              		.loc 1 81 0
+ 130 0016 836D     		ldr	r3, [r0, #88]
+ 131 0018 C365     		str	r3, [r0, #92]
+  82:rt_thread/src/clock.c **** 
+  83:rt_thread/src/clock.c ****         /* yield */
+  84:rt_thread/src/clock.c ****         rt_thread_yield();
+ 132              		.loc 1 84 0
+ 133 001a FFF7FEFF 		bl	rt_thread_yield
+ 134              	.LVL5:
+ 135              	.L10:
+  85:rt_thread/src/clock.c ****     }
+  86:rt_thread/src/clock.c **** 
+  87:rt_thread/src/clock.c ****     /* check timer */
+  88:rt_thread/src/clock.c ****     rt_timer_check();
+ 136              		.loc 1 88 0
+ 137 001e FFF7FEFF 		bl	rt_timer_check
+ 138              	.LVL6:
+ 139 0022 08BD     		pop	{r3, pc}
+ 140              	.L13:
+ 141              		.align	2
+ 142              	.L12:
+ 143 0024 00000000 		.word	.LANCHOR0
+ 144              		.cfi_endproc
+ 145              	.LFE18:
+ 147              		.section	.text.rt_tick_from_millisecond,"ax",%progbits
+ 148              		.align	2
+ARM GAS  /tmp/ccCSUlE2.s 			page 5
+
+
+ 149              		.global	rt_tick_from_millisecond
+ 150              		.thumb
+ 151              		.thumb_func
+ 153              	rt_tick_from_millisecond:
+ 154              	.LFB19:
+  89:rt_thread/src/clock.c **** }
+  90:rt_thread/src/clock.c **** 
+  91:rt_thread/src/clock.c **** /**
+  92:rt_thread/src/clock.c ****  * This function will calculate the tick from millisecond.
+  93:rt_thread/src/clock.c ****  *
+  94:rt_thread/src/clock.c ****  * @param ms the specified millisecond
+  95:rt_thread/src/clock.c ****  *           - Negative Number wait forever
+  96:rt_thread/src/clock.c ****  *           - Zero not wait
+  97:rt_thread/src/clock.c ****  *           - Max 0x7fffffff
+  98:rt_thread/src/clock.c ****  *
+  99:rt_thread/src/clock.c ****  * @return the calculated tick
+ 100:rt_thread/src/clock.c ****  */
+ 101:rt_thread/src/clock.c **** rt_tick_t rt_tick_from_millisecond(rt_int32_t ms)
+ 102:rt_thread/src/clock.c **** {
+ 155              		.loc 1 102 0
+ 156              		.cfi_startproc
+ 157              		@ args = 0, pretend = 0, frame = 0
+ 158              		@ frame_needed = 0, uses_anonymous_args = 0
+ 159              		@ link register save eliminated.
+ 160              	.LVL7:
+ 103:rt_thread/src/clock.c ****     rt_tick_t tick;
+ 104:rt_thread/src/clock.c **** 
+ 105:rt_thread/src/clock.c ****     if (ms < 0)
+ 161              		.loc 1 105 0
+ 162 0000 0028     		cmp	r0, #0
+ 163 0002 17DB     		blt	.L16
+ 102:rt_thread/src/clock.c ****     rt_tick_t tick;
+ 164              		.loc 1 102 0
+ 165 0004 10B4     		push	{r4}
+ 166              	.LCFI2:
+ 167              		.cfi_def_cfa_offset 4
+ 168              		.cfi_offset 4, -4
+ 106:rt_thread/src/clock.c ****     {
+ 107:rt_thread/src/clock.c ****         tick = (rt_tick_t)RT_WAITING_FOREVER;
+ 108:rt_thread/src/clock.c ****     }
+ 109:rt_thread/src/clock.c ****     else
+ 110:rt_thread/src/clock.c ****     {
+ 111:rt_thread/src/clock.c ****         tick = RT_TICK_PER_SECOND * (ms / 1000);
+ 169              		.loc 1 111 0
+ 170 0006 0E49     		ldr	r1, .L19
+ 171 0008 81FB0023 		smull	r2, r3, r1, r0
+ 172 000c C217     		asrs	r2, r0, #31
+ 173 000e C2EBA312 		rsb	r2, r2, r3, asr #6
+ 174 0012 6424     		movs	r4, #100
+ 175              	.LVL8:
+ 112:rt_thread/src/clock.c ****         tick += (RT_TICK_PER_SECOND * (ms % 1000) + 999) / 1000;
+ 176              		.loc 1 112 0
+ 177 0014 4FF47A73 		mov	r3, #1000
+ 178 0018 03FB1203 		mls	r3, r3, r2, r0
+ 179 001c 04FB03F3 		mul	r3, r4, r3
+ 180 0020 03F2E733 		addw	r3, r3, #999
+ 181 0024 81FB0301 		smull	r0, r1, r1, r3
+ARM GAS  /tmp/ccCSUlE2.s 			page 6
+
+
+ 182              	.LVL9:
+ 183 0028 DB17     		asrs	r3, r3, #31
+ 184 002a C3EBA113 		rsb	r3, r3, r1, asr #6
+ 185 002e 04FB0230 		mla	r0, r4, r2, r3
+ 186              	.LVL10:
+ 187 0032 02E0     		b	.L15
+ 188              	.LVL11:
+ 189              	.L16:
+ 190              	.LCFI3:
+ 191              		.cfi_def_cfa_offset 0
+ 192              		.cfi_restore 4
+ 107:rt_thread/src/clock.c ****     }
+ 193              		.loc 1 107 0
+ 194 0034 4FF0FF30 		mov	r0, #-1
+ 195              	.LVL12:
+ 196 0038 7047     		bx	lr
+ 197              	.LVL13:
+ 198              	.L15:
+ 199              	.LCFI4:
+ 200              		.cfi_def_cfa_offset 4
+ 201              		.cfi_offset 4, -4
+ 113:rt_thread/src/clock.c ****     }
+ 114:rt_thread/src/clock.c ****     
+ 115:rt_thread/src/clock.c ****     /* return the calculated tick */
+ 116:rt_thread/src/clock.c ****     return tick;
+ 117:rt_thread/src/clock.c **** }
+ 202              		.loc 1 117 0
+ 203 003a 10BC     		pop	{r4}
+ 204              	.LCFI5:
+ 205              		.cfi_restore 4
+ 206              		.cfi_def_cfa_offset 0
+ 207 003c 7047     		bx	lr
+ 208              	.L20:
+ 209 003e 00BF     		.align	2
+ 210              	.L19:
+ 211 0040 D34D6210 		.word	274877907
+ 212              		.cfi_endproc
+ 213              	.LFE19:
+ 215              		.section	.bss.rt_tick,"aw",%nobits
+ 216              		.align	2
+ 217              		.set	.LANCHOR0,. + 0
+ 220              	rt_tick:
+ 221 0000 00000000 		.space	4
+ 222              		.text
+ 223              	.Letext0:
+ 224              		.file 2 "rt_thread/include/rtdef.h"
+ 225              		.file 3 "rt_thread/include/rthw.h"
+ 226              		.file 4 "rt_thread/include/rtthread.h"
+ARM GAS  /tmp/ccCSUlE2.s 			page 7
+
+
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 clock.c
+     /tmp/ccCSUlE2.s:20     .text.rt_system_tick_init:0000000000000000 $t
+     /tmp/ccCSUlE2.s:25     .text.rt_system_tick_init:0000000000000000 rt_system_tick_init
+     /tmp/ccCSUlE2.s:38     .text.rt_tick_get:0000000000000000 $t
+     /tmp/ccCSUlE2.s:43     .text.rt_tick_get:0000000000000000 rt_tick_get
+     /tmp/ccCSUlE2.s:57     .text.rt_tick_get:0000000000000008 $d
+     /tmp/ccCSUlE2.s:62     .text.rt_tick_set:0000000000000000 $t
+     /tmp/ccCSUlE2.s:67     .text.rt_tick_set:0000000000000000 rt_tick_set
+     /tmp/ccCSUlE2.s:94     .text.rt_tick_set:0000000000000014 $d
+     /tmp/ccCSUlE2.s:99     .text.rt_tick_increase:0000000000000000 $t
+     /tmp/ccCSUlE2.s:104    .text.rt_tick_increase:0000000000000000 rt_tick_increase
+     /tmp/ccCSUlE2.s:143    .text.rt_tick_increase:0000000000000024 $d
+     /tmp/ccCSUlE2.s:148    .text.rt_tick_from_millisecond:0000000000000000 $t
+     /tmp/ccCSUlE2.s:153    .text.rt_tick_from_millisecond:0000000000000000 rt_tick_from_millisecond
+     /tmp/ccCSUlE2.s:211    .text.rt_tick_from_millisecond:0000000000000040 $d
+     /tmp/ccCSUlE2.s:216    .bss.rt_tick:0000000000000000 $d
+     /tmp/ccCSUlE2.s:220    .bss.rt_tick:0000000000000000 rt_tick
+                     .debug_frame:0000000000000010 $d
+
+UNDEFINED SYMBOLS
+rt_hw_interrupt_disable
+rt_hw_interrupt_enable
+rt_thread_self
+rt_thread_yield
+rt_timer_check

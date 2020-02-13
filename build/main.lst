@@ -1,0 +1,325 @@
+ARM GAS  /tmp/cc42X2DT.s 			page 1
+
+
+   1              		.syntax unified
+   2              		.cpu cortex-m3
+   3              		.fpu softvfp
+   4              		.eabi_attribute 20, 1
+   5              		.eabi_attribute 21, 1
+   6              		.eabi_attribute 23, 3
+   7              		.eabi_attribute 24, 1
+   8              		.eabi_attribute 25, 1
+   9              		.eabi_attribute 26, 1
+  10              		.eabi_attribute 30, 1
+  11              		.eabi_attribute 34, 1
+  12              		.eabi_attribute 18, 4
+  13              		.thumb
+  14              		.syntax unified
+  15              		.file	"main.c"
+  16              		.text
+  17              	.Ltext0:
+  18              		.cfi_sections	.debug_frame
+  19              		.section	.text.MX_GPIO_Init,"ax",%progbits
+  20              		.align	2
+  21              		.thumb
+  22              		.thumb_func
+  24              	MX_GPIO_Init:
+  25              	.LFB67:
+  26              		.file 1 "Startup/Src/main.c"
+   1:Startup/Src/main.c **** #include "main.h"
+   2:Startup/Src/main.c **** 
+   3:Startup/Src/main.c **** void SystemClock_Config(void);
+   4:Startup/Src/main.c **** static void MX_GPIO_Init(void);
+   5:Startup/Src/main.c **** 
+   6:Startup/Src/main.c **** int main(void)
+   7:Startup/Src/main.c **** {
+   8:Startup/Src/main.c ****    HAL_Init();
+   9:Startup/Src/main.c **** 
+  10:Startup/Src/main.c ****   SystemClock_Config();
+  11:Startup/Src/main.c **** 
+  12:Startup/Src/main.c ****   MX_GPIO_Init();
+  13:Startup/Src/main.c **** 
+  14:Startup/Src/main.c ****   while (1)
+  15:Startup/Src/main.c ****   {
+  16:Startup/Src/main.c **** 
+  17:Startup/Src/main.c ****   }
+  18:Startup/Src/main.c **** 
+  19:Startup/Src/main.c **** }
+  20:Startup/Src/main.c **** 
+  21:Startup/Src/main.c **** 
+  22:Startup/Src/main.c **** void SystemClock_Config(void)
+  23:Startup/Src/main.c **** {
+  24:Startup/Src/main.c ****   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+  25:Startup/Src/main.c ****   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+  26:Startup/Src/main.c **** 
+  27:Startup/Src/main.c ****   /** Initializes the CPU, AHB and APB busses clocks 
+  28:Startup/Src/main.c ****   */
+  29:Startup/Src/main.c ****   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+  30:Startup/Src/main.c ****   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
+  31:Startup/Src/main.c ****   RCC_OscInitStruct.HSEPredivValue = RCC_HSE_PREDIV_DIV1;
+  32:Startup/Src/main.c ****   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+ARM GAS  /tmp/cc42X2DT.s 			page 2
+
+
+  33:Startup/Src/main.c ****   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+  34:Startup/Src/main.c ****   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
+  35:Startup/Src/main.c ****   RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL9;
+  36:Startup/Src/main.c ****   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+  37:Startup/Src/main.c ****   {
+  38:Startup/Src/main.c ****     Error_Handler();
+  39:Startup/Src/main.c ****   }
+  40:Startup/Src/main.c ****   /** Initializes the CPU, AHB and APB busses clocks 
+  41:Startup/Src/main.c ****   */
+  42:Startup/Src/main.c ****   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
+  43:Startup/Src/main.c ****                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
+  44:Startup/Src/main.c ****   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+  45:Startup/Src/main.c ****   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+  46:Startup/Src/main.c ****   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
+  47:Startup/Src/main.c ****   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+  48:Startup/Src/main.c **** 
+  49:Startup/Src/main.c ****   if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
+  50:Startup/Src/main.c ****   {
+  51:Startup/Src/main.c ****     Error_Handler();
+  52:Startup/Src/main.c ****   }
+  53:Startup/Src/main.c **** }
+  54:Startup/Src/main.c **** 
+  55:Startup/Src/main.c **** /**
+  56:Startup/Src/main.c ****   * @brief GPIO Initialization Function
+  57:Startup/Src/main.c ****   * @param None
+  58:Startup/Src/main.c ****   * @retval None
+  59:Startup/Src/main.c ****   */
+  60:Startup/Src/main.c **** static void MX_GPIO_Init(void)
+  61:Startup/Src/main.c **** {
+  27              		.loc 1 61 0
+  28              		.cfi_startproc
+  29              		@ args = 0, pretend = 0, frame = 8
+  30              		@ frame_needed = 0, uses_anonymous_args = 0
+  31              		@ link register save eliminated.
+  32 0000 82B0     		sub	sp, sp, #8
+  33              	.LCFI0:
+  34              		.cfi_def_cfa_offset 8
+  35              	.LBB2:
+  62:Startup/Src/main.c **** 
+  63:Startup/Src/main.c ****   /* GPIO Ports Clock Enable */
+  64:Startup/Src/main.c ****   __HAL_RCC_GPIOD_CLK_ENABLE();
+  36              		.loc 1 64 0
+  37 0002 064B     		ldr	r3, .L3
+  38 0004 9A69     		ldr	r2, [r3, #24]
+  39 0006 42F02002 		orr	r2, r2, #32
+  40 000a 9A61     		str	r2, [r3, #24]
+  41 000c 9B69     		ldr	r3, [r3, #24]
+  42 000e 03F02003 		and	r3, r3, #32
+  43 0012 0193     		str	r3, [sp, #4]
+  44 0014 019B     		ldr	r3, [sp, #4]
+  45              	.LBE2:
+  65:Startup/Src/main.c **** 
+  66:Startup/Src/main.c **** }
+  46              		.loc 1 66 0
+  47 0016 02B0     		add	sp, sp, #8
+  48              	.LCFI1:
+  49              		.cfi_def_cfa_offset 0
+ARM GAS  /tmp/cc42X2DT.s 			page 3
+
+
+  50              		@ sp needed
+  51 0018 7047     		bx	lr
+  52              	.L4:
+  53 001a 00BF     		.align	2
+  54              	.L3:
+  55 001c 00100240 		.word	1073876992
+  56              		.cfi_endproc
+  57              	.LFE67:
+  59              		.section	.text.SystemClock_Config,"ax",%progbits
+  60              		.align	2
+  61              		.global	SystemClock_Config
+  62              		.thumb
+  63              		.thumb_func
+  65              	SystemClock_Config:
+  66              	.LFB66:
+  23:Startup/Src/main.c ****   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+  67              		.loc 1 23 0
+  68              		.cfi_startproc
+  69              		@ args = 0, pretend = 0, frame = 64
+  70              		@ frame_needed = 0, uses_anonymous_args = 0
+  71 0000 30B5     		push	{r4, r5, lr}
+  72              	.LCFI2:
+  73              		.cfi_def_cfa_offset 12
+  74              		.cfi_offset 4, -12
+  75              		.cfi_offset 5, -8
+  76              		.cfi_offset 14, -4
+  77 0002 91B0     		sub	sp, sp, #68
+  78              	.LCFI3:
+  79              		.cfi_def_cfa_offset 80
+  24:Startup/Src/main.c ****   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+  80              		.loc 1 24 0
+  81 0004 2822     		movs	r2, #40
+  82 0006 0021     		movs	r1, #0
+  83 0008 06A8     		add	r0, sp, #24
+  84 000a FFF7FEFF 		bl	memset
+  85              	.LVL0:
+  25:Startup/Src/main.c **** 
+  86              		.loc 1 25 0
+  87 000e 0024     		movs	r4, #0
+  88 0010 0194     		str	r4, [sp, #4]
+  89 0012 0294     		str	r4, [sp, #8]
+  90 0014 0394     		str	r4, [sp, #12]
+  91 0016 0494     		str	r4, [sp, #16]
+  92 0018 0594     		str	r4, [sp, #20]
+  29:Startup/Src/main.c ****   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
+  93              		.loc 1 29 0
+  94 001a 0122     		movs	r2, #1
+  95 001c 0692     		str	r2, [sp, #24]
+  30:Startup/Src/main.c ****   RCC_OscInitStruct.HSEPredivValue = RCC_HSE_PREDIV_DIV1;
+  96              		.loc 1 30 0
+  97 001e 4FF48033 		mov	r3, #65536
+  98 0022 0793     		str	r3, [sp, #28]
+  32:Startup/Src/main.c ****   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+  99              		.loc 1 32 0
+ 100 0024 0A92     		str	r2, [sp, #40]
+  33:Startup/Src/main.c ****   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
+ 101              		.loc 1 33 0
+ARM GAS  /tmp/cc42X2DT.s 			page 4
+
+
+ 102 0026 0225     		movs	r5, #2
+ 103 0028 0D95     		str	r5, [sp, #52]
+  34:Startup/Src/main.c ****   RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL9;
+ 104              		.loc 1 34 0
+ 105 002a 0E93     		str	r3, [sp, #56]
+  35:Startup/Src/main.c ****   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+ 106              		.loc 1 35 0
+ 107 002c 4FF4E013 		mov	r3, #1835008
+ 108 0030 0F93     		str	r3, [sp, #60]
+  36:Startup/Src/main.c ****   {
+ 109              		.loc 1 36 0
+ 110 0032 06A8     		add	r0, sp, #24
+ 111 0034 FFF7FEFF 		bl	HAL_RCC_OscConfig
+ 112              	.LVL1:
+  42:Startup/Src/main.c ****                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
+ 113              		.loc 1 42 0
+ 114 0038 0F23     		movs	r3, #15
+ 115 003a 0193     		str	r3, [sp, #4]
+  44:Startup/Src/main.c ****   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+ 116              		.loc 1 44 0
+ 117 003c 0295     		str	r5, [sp, #8]
+  45:Startup/Src/main.c ****   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
+ 118              		.loc 1 45 0
+ 119 003e 0394     		str	r4, [sp, #12]
+  46:Startup/Src/main.c ****   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+ 120              		.loc 1 46 0
+ 121 0040 4FF48063 		mov	r3, #1024
+ 122 0044 0493     		str	r3, [sp, #16]
+  47:Startup/Src/main.c **** 
+ 123              		.loc 1 47 0
+ 124 0046 0594     		str	r4, [sp, #20]
+  49:Startup/Src/main.c ****   {
+ 125              		.loc 1 49 0
+ 126 0048 2946     		mov	r1, r5
+ 127 004a 01A8     		add	r0, sp, #4
+ 128 004c FFF7FEFF 		bl	HAL_RCC_ClockConfig
+ 129              	.LVL2:
+  53:Startup/Src/main.c **** 
+ 130              		.loc 1 53 0
+ 131 0050 11B0     		add	sp, sp, #68
+ 132              	.LCFI4:
+ 133              		.cfi_def_cfa_offset 12
+ 134              		@ sp needed
+ 135 0052 30BD     		pop	{r4, r5, pc}
+ 136              		.cfi_endproc
+ 137              	.LFE66:
+ 139              		.section	.text.main,"ax",%progbits
+ 140              		.align	2
+ 141              		.global	main
+ 142              		.thumb
+ 143              		.thumb_func
+ 145              	main:
+ 146              	.LFB65:
+   7:Startup/Src/main.c ****    HAL_Init();
+ 147              		.loc 1 7 0
+ 148              		.cfi_startproc
+ 149              		@ Volatile: function does not return.
+ARM GAS  /tmp/cc42X2DT.s 			page 5
+
+
+ 150              		@ args = 0, pretend = 0, frame = 0
+ 151              		@ frame_needed = 0, uses_anonymous_args = 0
+ 152 0000 08B5     		push	{r3, lr}
+ 153              	.LCFI5:
+ 154              		.cfi_def_cfa_offset 8
+ 155              		.cfi_offset 3, -8
+ 156              		.cfi_offset 14, -4
+   8:Startup/Src/main.c **** 
+ 157              		.loc 1 8 0
+ 158 0002 FFF7FEFF 		bl	HAL_Init
+ 159              	.LVL3:
+  10:Startup/Src/main.c **** 
+ 160              		.loc 1 10 0
+ 161 0006 FFF7FEFF 		bl	SystemClock_Config
+ 162              	.LVL4:
+  12:Startup/Src/main.c **** 
+ 163              		.loc 1 12 0
+ 164 000a FFF7FEFF 		bl	MX_GPIO_Init
+ 165              	.LVL5:
+ 166              	.L8:
+ 167 000e FEE7     		b	.L8
+ 168              		.cfi_endproc
+ 169              	.LFE65:
+ 171              		.section	.text.Error_Handler,"ax",%progbits
+ 172              		.align	2
+ 173              		.global	Error_Handler
+ 174              		.thumb
+ 175              		.thumb_func
+ 177              	Error_Handler:
+ 178              	.LFB68:
+  67:Startup/Src/main.c **** 
+  68:Startup/Src/main.c **** /* USER CODE BEGIN 4 */
+  69:Startup/Src/main.c **** 
+  70:Startup/Src/main.c **** /* USER CODE END 4 */
+  71:Startup/Src/main.c **** 
+  72:Startup/Src/main.c **** /**
+  73:Startup/Src/main.c ****   * @brief  This function is executed in case of error occurrence.
+  74:Startup/Src/main.c ****   * @retval None
+  75:Startup/Src/main.c ****   */
+  76:Startup/Src/main.c **** void Error_Handler(void)
+  77:Startup/Src/main.c **** {
+ 179              		.loc 1 77 0
+ 180              		.cfi_startproc
+ 181              		@ args = 0, pretend = 0, frame = 0
+ 182              		@ frame_needed = 0, uses_anonymous_args = 0
+ 183              		@ link register save eliminated.
+ 184 0000 7047     		bx	lr
+ 185              		.cfi_endproc
+ 186              	.LFE68:
+ 188 0002 00BF     		.text
+ 189              	.Letext0:
+ 190              		.file 2 "rt_thread/components/libc/compilers/minilibc/stdint.h"
+ 191              		.file 3 "Drivers/CMSIS/Device/ST/STM32F1xx/Include/stm32f103xb.h"
+ 192              		.file 4 "Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_rcc.h"
+ 193              		.file 5 "Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_rcc_ex.h"
+ 194              		.file 6 "Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal.h"
+ 195              		.file 7 "Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_def.h"
+ARM GAS  /tmp/cc42X2DT.s 			page 6
+
+
+ 196              		.file 8 "Drivers/CMSIS/Include/core_cm3.h"
+ARM GAS  /tmp/cc42X2DT.s 			page 7
+
+
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 main.c
+     /tmp/cc42X2DT.s:20     .text.MX_GPIO_Init:0000000000000000 $t
+     /tmp/cc42X2DT.s:24     .text.MX_GPIO_Init:0000000000000000 MX_GPIO_Init
+     /tmp/cc42X2DT.s:55     .text.MX_GPIO_Init:000000000000001c $d
+     /tmp/cc42X2DT.s:60     .text.SystemClock_Config:0000000000000000 $t
+     /tmp/cc42X2DT.s:65     .text.SystemClock_Config:0000000000000000 SystemClock_Config
+     /tmp/cc42X2DT.s:140    .text.main:0000000000000000 $t
+     /tmp/cc42X2DT.s:145    .text.main:0000000000000000 main
+     /tmp/cc42X2DT.s:172    .text.Error_Handler:0000000000000000 $t
+     /tmp/cc42X2DT.s:177    .text.Error_Handler:0000000000000000 Error_Handler
+                     .debug_frame:0000000000000010 $d
+
+UNDEFINED SYMBOLS
+memset
+HAL_RCC_OscConfig
+HAL_RCC_ClockConfig
+HAL_Init

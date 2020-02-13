@@ -1,0 +1,3413 @@
+ARM GAS  /tmp/ccDetQHQ.s 			page 1
+
+
+   1              		.syntax unified
+   2              		.cpu cortex-m3
+   3              		.fpu softvfp
+   4              		.eabi_attribute 20, 1
+   5              		.eabi_attribute 21, 1
+   6              		.eabi_attribute 23, 3
+   7              		.eabi_attribute 24, 1
+   8              		.eabi_attribute 25, 1
+   9              		.eabi_attribute 26, 1
+  10              		.eabi_attribute 30, 1
+  11              		.eabi_attribute 34, 1
+  12              		.eabi_attribute 18, 4
+  13              		.thumb
+  14              		.syntax unified
+  15              		.file	"thread.c"
+  16              		.text
+  17              	.Ltext0:
+  18              		.cfi_sections	.debug_frame
+  19              		.section	.text.rt_thread_exit,"ax",%progbits
+  20              		.align	2
+  21              		.global	rt_thread_exit
+  22              		.thumb
+  23              		.thumb_func
+  25              	rt_thread_exit:
+  26              	.LFB18:
+  27              		.file 1 "rt_thread/src/thread.c"
+   1:rt_thread/src/thread.c **** /*
+   2:rt_thread/src/thread.c ****  * Copyright (c) 2006-2018, RT-Thread Development Team
+   3:rt_thread/src/thread.c ****  *
+   4:rt_thread/src/thread.c ****  * SPDX-License-Identifier: Apache-2.0
+   5:rt_thread/src/thread.c ****  *
+   6:rt_thread/src/thread.c ****  * Change Logs:
+   7:rt_thread/src/thread.c ****  * Date           Author       Notes
+   8:rt_thread/src/thread.c ****  * 2006-03-28     Bernard      first version
+   9:rt_thread/src/thread.c ****  * 2006-04-29     Bernard      implement thread timer
+  10:rt_thread/src/thread.c ****  * 2006-04-30     Bernard      added THREAD_DEBUG
+  11:rt_thread/src/thread.c ****  * 2006-05-27     Bernard      fixed the rt_thread_yield bug
+  12:rt_thread/src/thread.c ****  * 2006-06-03     Bernard      fixed the thread timer init bug
+  13:rt_thread/src/thread.c ****  * 2006-08-10     Bernard      fixed the timer bug in thread_sleep
+  14:rt_thread/src/thread.c ****  * 2006-09-03     Bernard      changed rt_timer_delete to rt_timer_detach
+  15:rt_thread/src/thread.c ****  * 2006-09-03     Bernard      implement rt_thread_detach
+  16:rt_thread/src/thread.c ****  * 2008-02-16     Bernard      fixed the rt_thread_timeout bug
+  17:rt_thread/src/thread.c ****  * 2010-03-21     Bernard      change the errno of rt_thread_delay/sleep to
+  18:rt_thread/src/thread.c ****  *                             RT_EOK.
+  19:rt_thread/src/thread.c ****  * 2010-11-10     Bernard      add cleanup callback function in thread exit.
+  20:rt_thread/src/thread.c ****  * 2011-09-01     Bernard      fixed rt_thread_exit issue when the current
+  21:rt_thread/src/thread.c ****  *                             thread preempted, which reported by Jiaxing Lee.
+  22:rt_thread/src/thread.c ****  * 2011-09-08     Bernard      fixed the scheduling issue in rt_thread_startup.
+  23:rt_thread/src/thread.c ****  * 2012-12-29     Bernard      fixed compiling warning.
+  24:rt_thread/src/thread.c ****  * 2016-08-09     ArdaFu       add thread suspend and resume hook.
+  25:rt_thread/src/thread.c ****  * 2017-04-10     armink       fixed the rt_thread_delete and rt_thread_detach
+  26:rt_thread/src/thread.c ****                                bug when thread has not startup.
+  27:rt_thread/src/thread.c ****  */
+  28:rt_thread/src/thread.c **** 
+  29:rt_thread/src/thread.c **** #include <rtthread.h>
+  30:rt_thread/src/thread.c **** #include <rthw.h>
+  31:rt_thread/src/thread.c **** 
+ARM GAS  /tmp/ccDetQHQ.s 			page 2
+
+
+  32:rt_thread/src/thread.c **** extern rt_list_t rt_thread_priority_table[RT_THREAD_PRIORITY_MAX];
+  33:rt_thread/src/thread.c **** extern struct rt_thread *rt_current_thread;
+  34:rt_thread/src/thread.c **** extern rt_list_t rt_thread_defunct;
+  35:rt_thread/src/thread.c **** 
+  36:rt_thread/src/thread.c **** #ifdef RT_USING_HOOK
+  37:rt_thread/src/thread.c **** 
+  38:rt_thread/src/thread.c **** static void (*rt_thread_suspend_hook)(rt_thread_t thread);
+  39:rt_thread/src/thread.c **** static void (*rt_thread_resume_hook) (rt_thread_t thread);
+  40:rt_thread/src/thread.c **** static void (*rt_thread_inited_hook) (rt_thread_t thread);
+  41:rt_thread/src/thread.c **** 
+  42:rt_thread/src/thread.c **** /**
+  43:rt_thread/src/thread.c ****  * @ingroup Hook
+  44:rt_thread/src/thread.c ****  * This function sets a hook function when the system suspend a thread.
+  45:rt_thread/src/thread.c ****  *
+  46:rt_thread/src/thread.c ****  * @param hook the specified hook function
+  47:rt_thread/src/thread.c ****  *
+  48:rt_thread/src/thread.c ****  * @note the hook function must be simple and never be blocked or suspend.
+  49:rt_thread/src/thread.c ****  */
+  50:rt_thread/src/thread.c **** void rt_thread_suspend_sethook(void (*hook)(rt_thread_t thread))
+  51:rt_thread/src/thread.c **** {
+  52:rt_thread/src/thread.c ****     rt_thread_suspend_hook = hook;
+  53:rt_thread/src/thread.c **** }
+  54:rt_thread/src/thread.c **** 
+  55:rt_thread/src/thread.c **** /**
+  56:rt_thread/src/thread.c ****  * @ingroup Hook
+  57:rt_thread/src/thread.c ****  * This function sets a hook function when the system resume a thread.
+  58:rt_thread/src/thread.c ****  *
+  59:rt_thread/src/thread.c ****  * @param hook the specified hook function
+  60:rt_thread/src/thread.c ****  *
+  61:rt_thread/src/thread.c ****  * @note the hook function must be simple and never be blocked or suspend.
+  62:rt_thread/src/thread.c ****  */
+  63:rt_thread/src/thread.c **** void rt_thread_resume_sethook(void (*hook)(rt_thread_t thread))
+  64:rt_thread/src/thread.c **** {
+  65:rt_thread/src/thread.c ****     rt_thread_resume_hook = hook;
+  66:rt_thread/src/thread.c **** }
+  67:rt_thread/src/thread.c **** 
+  68:rt_thread/src/thread.c **** /**
+  69:rt_thread/src/thread.c ****  * @ingroup Hook
+  70:rt_thread/src/thread.c ****  * This function sets a hook function when a thread is initialized.
+  71:rt_thread/src/thread.c ****  *
+  72:rt_thread/src/thread.c ****  * @param hook the specified hook function
+  73:rt_thread/src/thread.c ****  */
+  74:rt_thread/src/thread.c **** void rt_thread_inited_sethook(void (*hook)(rt_thread_t thread))
+  75:rt_thread/src/thread.c **** {
+  76:rt_thread/src/thread.c ****     rt_thread_inited_hook = hook;
+  77:rt_thread/src/thread.c **** }
+  78:rt_thread/src/thread.c **** 
+  79:rt_thread/src/thread.c **** #endif
+  80:rt_thread/src/thread.c **** 
+  81:rt_thread/src/thread.c **** void rt_thread_exit(void)
+  82:rt_thread/src/thread.c **** {
+  28              		.loc 1 82 0
+  29              		.cfi_startproc
+  30              		@ args = 0, pretend = 0, frame = 0
+  31              		@ frame_needed = 0, uses_anonymous_args = 0
+  32 0000 38B5     		push	{r3, r4, r5, lr}
+  33              	.LCFI0:
+ARM GAS  /tmp/ccDetQHQ.s 			page 3
+
+
+  34              		.cfi_def_cfa_offset 16
+  35              		.cfi_offset 3, -16
+  36              		.cfi_offset 4, -12
+  37              		.cfi_offset 5, -8
+  38              		.cfi_offset 14, -4
+  83:rt_thread/src/thread.c ****     struct rt_thread *thread;
+  84:rt_thread/src/thread.c ****     register rt_base_t level;
+  85:rt_thread/src/thread.c **** 
+  86:rt_thread/src/thread.c ****     /* get current thread */
+  87:rt_thread/src/thread.c ****     thread = rt_current_thread;
+  39              		.loc 1 87 0
+  40 0002 144B     		ldr	r3, .L5
+  41 0004 1C68     		ldr	r4, [r3]
+  42              	.LVL0:
+  88:rt_thread/src/thread.c **** 
+  89:rt_thread/src/thread.c ****     /* disable interrupt */
+  90:rt_thread/src/thread.c ****     level = rt_hw_interrupt_disable();
+  43              		.loc 1 90 0
+  44 0006 FFF7FEFF 		bl	rt_hw_interrupt_disable
+  45              	.LVL1:
+  46 000a 0546     		mov	r5, r0
+  47              	.LVL2:
+  91:rt_thread/src/thread.c **** 
+  92:rt_thread/src/thread.c ****     /* remove from schedule */
+  93:rt_thread/src/thread.c ****     rt_schedule_remove_thread(thread);
+  48              		.loc 1 93 0
+  49 000c 2046     		mov	r0, r4
+  50              	.LVL3:
+  51 000e FFF7FEFF 		bl	rt_schedule_remove_thread
+  52              	.LVL4:
+  94:rt_thread/src/thread.c ****     /* change stat */
+  95:rt_thread/src/thread.c ****     thread->stat = RT_THREAD_CLOSE;
+  53              		.loc 1 95 0
+  54 0012 0423     		movs	r3, #4
+  55 0014 84F83430 		strb	r3, [r4, #52]
+  96:rt_thread/src/thread.c **** 
+  97:rt_thread/src/thread.c ****     /* remove it from timer list */
+  98:rt_thread/src/thread.c ****     rt_timer_detach(&thread->thread_timer);
+  56              		.loc 1 98 0
+  57 0018 04F16000 		add	r0, r4, #96
+  58 001c FFF7FEFF 		bl	rt_timer_detach
+  59              	.LVL5:
+  99:rt_thread/src/thread.c **** 
+ 100:rt_thread/src/thread.c ****     if ((rt_object_is_systemobject((rt_object_t)thread) == RT_TRUE) &&
+  60              		.loc 1 100 0
+  61 0020 2046     		mov	r0, r4
+  62 0022 FFF7FEFF 		bl	rt_object_is_systemobject
+  63              	.LVL6:
+  64 0026 0128     		cmp	r0, #1
+  65 0028 06D1     		bne	.L2
+ 101:rt_thread/src/thread.c ****         thread->cleanup == RT_NULL)
+  66              		.loc 1 101 0 discriminator 1
+  67 002a D4F88C30 		ldr	r3, [r4, #140]
+ 100:rt_thread/src/thread.c ****         thread->cleanup == RT_NULL)
+  68              		.loc 1 100 0 discriminator 1
+  69 002e 1BB9     		cbnz	r3, .L2
+ 102:rt_thread/src/thread.c ****     {
+ARM GAS  /tmp/ccDetQHQ.s 			page 4
+
+
+ 103:rt_thread/src/thread.c ****         rt_object_detach((rt_object_t)thread);
+  70              		.loc 1 103 0
+  71 0030 2046     		mov	r0, r4
+  72 0032 FFF7FEFF 		bl	rt_object_detach
+  73              	.LVL7:
+  74 0036 07E0     		b	.L3
+  75              	.L2:
+ 104:rt_thread/src/thread.c ****     }
+ 105:rt_thread/src/thread.c ****     else
+ 106:rt_thread/src/thread.c ****     {
+ 107:rt_thread/src/thread.c ****         /* insert to defunct thread list */
+ 108:rt_thread/src/thread.c ****         rt_list_insert_after(&rt_thread_defunct, &(thread->tlist));
+  76              		.loc 1 108 0
+  77 0038 04F11402 		add	r2, r4, #20
+  78              	.LVL8:
+  79              	.LBB18:
+  80              	.LBB19:
+  81              		.file 2 "rt_thread/include/rtservice.h"
+   1:rt_thread/include/rtservice.h **** /*
+   2:rt_thread/include/rtservice.h ****  * Copyright (c) 2006-2018, RT-Thread Development Team
+   3:rt_thread/include/rtservice.h ****  *
+   4:rt_thread/include/rtservice.h ****  * SPDX-License-Identifier: Apache-2.0
+   5:rt_thread/include/rtservice.h ****  *
+   6:rt_thread/include/rtservice.h ****  * Change Logs:
+   7:rt_thread/include/rtservice.h ****  * Date           Author       Notes
+   8:rt_thread/include/rtservice.h ****  * 2006-03-16     Bernard      the first version
+   9:rt_thread/include/rtservice.h ****  * 2006-09-07     Bernard      move the kservice APIs to rtthread.h
+  10:rt_thread/include/rtservice.h ****  * 2007-06-27     Bernard      fix the rt_list_remove bug
+  11:rt_thread/include/rtservice.h ****  * 2012-03-22     Bernard      rename kservice.h to rtservice.h
+  12:rt_thread/include/rtservice.h ****  * 2017-11-15     JasonJia     Modify rt_slist_foreach to rt_slist_for_each_entry.
+  13:rt_thread/include/rtservice.h ****  *                             Make code cleanup.
+  14:rt_thread/include/rtservice.h ****  */
+  15:rt_thread/include/rtservice.h **** 
+  16:rt_thread/include/rtservice.h **** #ifndef __RT_SERVICE_H__
+  17:rt_thread/include/rtservice.h **** #define __RT_SERVICE_H__
+  18:rt_thread/include/rtservice.h **** 
+  19:rt_thread/include/rtservice.h **** #ifdef __cplusplus
+  20:rt_thread/include/rtservice.h **** extern "C" {
+  21:rt_thread/include/rtservice.h **** #endif
+  22:rt_thread/include/rtservice.h **** 
+  23:rt_thread/include/rtservice.h **** /**
+  24:rt_thread/include/rtservice.h ****  * @addtogroup KernelService
+  25:rt_thread/include/rtservice.h ****  */
+  26:rt_thread/include/rtservice.h **** 
+  27:rt_thread/include/rtservice.h **** /**@{*/
+  28:rt_thread/include/rtservice.h **** 
+  29:rt_thread/include/rtservice.h **** /**
+  30:rt_thread/include/rtservice.h ****  * rt_container_of - return the member address of ptr, if the type of ptr is the
+  31:rt_thread/include/rtservice.h ****  * struct type.
+  32:rt_thread/include/rtservice.h ****  */
+  33:rt_thread/include/rtservice.h **** #define rt_container_of(ptr, type, member) \
+  34:rt_thread/include/rtservice.h ****     ((type *)((char *)(ptr) - (unsigned long)(&((type *)0)->member)))
+  35:rt_thread/include/rtservice.h **** 
+  36:rt_thread/include/rtservice.h **** 
+  37:rt_thread/include/rtservice.h **** /**
+  38:rt_thread/include/rtservice.h ****  * @brief initialize a list object
+  39:rt_thread/include/rtservice.h ****  */
+ARM GAS  /tmp/ccDetQHQ.s 			page 5
+
+
+  40:rt_thread/include/rtservice.h **** #define RT_LIST_OBJECT_INIT(object) { &(object), &(object) }
+  41:rt_thread/include/rtservice.h **** 
+  42:rt_thread/include/rtservice.h **** /**
+  43:rt_thread/include/rtservice.h ****  * @brief initialize a list
+  44:rt_thread/include/rtservice.h ****  *
+  45:rt_thread/include/rtservice.h ****  * @param l list to be initialized
+  46:rt_thread/include/rtservice.h ****  */
+  47:rt_thread/include/rtservice.h **** rt_inline void rt_list_init(rt_list_t *l)
+  48:rt_thread/include/rtservice.h **** {
+  49:rt_thread/include/rtservice.h ****     l->next = l->prev = l;
+  50:rt_thread/include/rtservice.h **** }
+  51:rt_thread/include/rtservice.h **** 
+  52:rt_thread/include/rtservice.h **** /**
+  53:rt_thread/include/rtservice.h ****  * @brief insert a node after a list
+  54:rt_thread/include/rtservice.h ****  *
+  55:rt_thread/include/rtservice.h ****  * @param l list to insert it
+  56:rt_thread/include/rtservice.h ****  * @param n new node to be inserted
+  57:rt_thread/include/rtservice.h ****  */
+  58:rt_thread/include/rtservice.h **** rt_inline void rt_list_insert_after(rt_list_t *l, rt_list_t *n)
+  59:rt_thread/include/rtservice.h **** {
+  60:rt_thread/include/rtservice.h ****     l->next->prev = n;
+  82              		.loc 2 60 0
+  83 003c 064B     		ldr	r3, .L5+4
+  84 003e 1968     		ldr	r1, [r3]
+  85 0040 4A60     		str	r2, [r1, #4]
+  61:rt_thread/include/rtservice.h ****     n->next = l->next;
+  86              		.loc 2 61 0
+  87 0042 6161     		str	r1, [r4, #20]
+  62:rt_thread/include/rtservice.h **** 
+  63:rt_thread/include/rtservice.h ****     l->next = n;
+  88              		.loc 2 63 0
+  89 0044 1A60     		str	r2, [r3]
+  64:rt_thread/include/rtservice.h ****     n->prev = l;
+  90              		.loc 2 64 0
+  91 0046 A361     		str	r3, [r4, #24]
+  92              	.LVL9:
+  93              	.L3:
+  94              	.LBE19:
+  95              	.LBE18:
+ 109:rt_thread/src/thread.c ****     }
+ 110:rt_thread/src/thread.c **** 
+ 111:rt_thread/src/thread.c ****     /* enable interrupt */
+ 112:rt_thread/src/thread.c ****     rt_hw_interrupt_enable(level);
+  96              		.loc 1 112 0
+  97 0048 2846     		mov	r0, r5
+  98 004a FFF7FEFF 		bl	rt_hw_interrupt_enable
+  99              	.LVL10:
+ 113:rt_thread/src/thread.c **** 
+ 114:rt_thread/src/thread.c ****     /* switch to next task */
+ 115:rt_thread/src/thread.c ****     rt_schedule();
+ 100              		.loc 1 115 0
+ 101 004e FFF7FEFF 		bl	rt_schedule
+ 102              	.LVL11:
+ 103 0052 38BD     		pop	{r3, r4, r5, pc}
+ 104              	.LVL12:
+ 105              	.L6:
+ 106              		.align	2
+ARM GAS  /tmp/ccDetQHQ.s 			page 6
+
+
+ 107              	.L5:
+ 108 0054 00000000 		.word	rt_current_thread
+ 109 0058 00000000 		.word	rt_thread_defunct
+ 110              		.cfi_endproc
+ 111              	.LFE18:
+ 113              		.section	.text._rt_thread_init,"ax",%progbits
+ 114              		.align	2
+ 115              		.thumb
+ 116              		.thumb_func
+ 118              	_rt_thread_init:
+ 119              	.LFB19:
+ 116:rt_thread/src/thread.c **** }
+ 117:rt_thread/src/thread.c **** 
+ 118:rt_thread/src/thread.c **** static rt_err_t _rt_thread_init(struct rt_thread *thread,
+ 119:rt_thread/src/thread.c ****                                 const char       *name,
+ 120:rt_thread/src/thread.c ****                                 void (*entry)(void *parameter),
+ 121:rt_thread/src/thread.c ****                                 void             *parameter,
+ 122:rt_thread/src/thread.c ****                                 void             *stack_start,
+ 123:rt_thread/src/thread.c ****                                 rt_uint32_t       stack_size,
+ 124:rt_thread/src/thread.c ****                                 rt_uint8_t        priority,
+ 125:rt_thread/src/thread.c ****                                 rt_uint32_t       tick)
+ 126:rt_thread/src/thread.c **** {
+ 120              		.loc 1 126 0
+ 121              		.cfi_startproc
+ 122              		@ args = 16, pretend = 0, frame = 0
+ 123              		@ frame_needed = 0, uses_anonymous_args = 0
+ 124              	.LVL13:
+ 125 0000 F0B5     		push	{r4, r5, r6, r7, lr}
+ 126              	.LCFI1:
+ 127              		.cfi_def_cfa_offset 20
+ 128              		.cfi_offset 4, -20
+ 129              		.cfi_offset 5, -16
+ 130              		.cfi_offset 6, -12
+ 131              		.cfi_offset 7, -8
+ 132              		.cfi_offset 14, -4
+ 133 0002 83B0     		sub	sp, sp, #12
+ 134              	.LCFI2:
+ 135              		.cfi_def_cfa_offset 32
+ 136 0004 0446     		mov	r4, r0
+ 137 0006 0898     		ldr	r0, [sp, #32]
+ 138              	.LVL14:
+ 139 0008 0999     		ldr	r1, [sp, #36]
+ 140              	.LVL15:
+ 141 000a 9DF82850 		ldrb	r5, [sp, #40]	@ zero_extendqisi2
+ 142 000e 0B9E     		ldr	r6, [sp, #44]
+ 127:rt_thread/src/thread.c ****     /* init thread list */
+ 128:rt_thread/src/thread.c ****     rt_list_init(&(thread->tlist));
+ 143              		.loc 1 128 0
+ 144 0010 04F11407 		add	r7, r4, #20
+ 145              	.LVL16:
+ 146              	.LBB20:
+ 147              	.LBB21:
+  49:rt_thread/include/rtservice.h **** }
+ 148              		.loc 2 49 0
+ 149 0014 A761     		str	r7, [r4, #24]
+ 150 0016 6761     		str	r7, [r4, #20]
+ 151              	.LVL17:
+ARM GAS  /tmp/ccDetQHQ.s 			page 7
+
+
+ 152              	.LBE21:
+ 153              	.LBE20:
+ 129:rt_thread/src/thread.c **** 
+ 130:rt_thread/src/thread.c ****     thread->entry = (void *)entry;
+ 154              		.loc 1 130 0
+ 155 0018 2262     		str	r2, [r4, #32]
+ 131:rt_thread/src/thread.c ****     thread->parameter = parameter;
+ 156              		.loc 1 131 0
+ 157 001a 6362     		str	r3, [r4, #36]
+ 132:rt_thread/src/thread.c **** 
+ 133:rt_thread/src/thread.c ****     /* stack init */
+ 134:rt_thread/src/thread.c ****     thread->stack_addr = stack_start;
+ 158              		.loc 1 134 0
+ 159 001c A062     		str	r0, [r4, #40]
+ 135:rt_thread/src/thread.c ****     thread->stack_size = stack_size;
+ 160              		.loc 1 135 0
+ 161 001e E162     		str	r1, [r4, #44]
+ 136:rt_thread/src/thread.c **** 
+ 137:rt_thread/src/thread.c ****     /* init thread stack */
+ 138:rt_thread/src/thread.c ****     rt_memset(thread->stack_addr, '#', thread->stack_size);
+ 162              		.loc 1 138 0
+ 163 0020 0A46     		mov	r2, r1
+ 164              	.LVL18:
+ 165 0022 2321     		movs	r1, #35
+ 166 0024 FFF7FEFF 		bl	rt_memset
+ 167              	.LVL19:
+ 139:rt_thread/src/thread.c **** #ifdef ARCH_CPU_STACK_GROWS_UPWARD
+ 140:rt_thread/src/thread.c ****     thread->sp = (void *)rt_hw_stack_init(thread->entry, thread->parameter,
+ 141:rt_thread/src/thread.c ****                                           (void *)((char *)thread->stack_addr),
+ 142:rt_thread/src/thread.c ****                                           (void *)rt_thread_exit);
+ 143:rt_thread/src/thread.c **** #else
+ 144:rt_thread/src/thread.c ****     thread->sp = (void *)rt_hw_stack_init(thread->entry, thread->parameter,
+ 145:rt_thread/src/thread.c ****                                           (rt_uint8_t *)((char *)thread->stack_addr + thread->stack
+ 168              		.loc 1 145 0
+ 169 0028 A16A     		ldr	r1, [r4, #40]
+ 170 002a E36A     		ldr	r3, [r4, #44]
+ 171 002c 1A1F     		subs	r2, r3, #4
+ 144:rt_thread/src/thread.c ****                                           (rt_uint8_t *)((char *)thread->stack_addr + thread->stack
+ 172              		.loc 1 144 0
+ 173 002e 194B     		ldr	r3, .L11
+ 174 0030 0A44     		add	r2, r2, r1
+ 175 0032 616A     		ldr	r1, [r4, #36]
+ 176 0034 206A     		ldr	r0, [r4, #32]
+ 177 0036 FFF7FEFF 		bl	rt_hw_stack_init
+ 178              	.LVL20:
+ 179 003a E061     		str	r0, [r4, #28]
+ 146:rt_thread/src/thread.c ****                                           (void *)rt_thread_exit);
+ 147:rt_thread/src/thread.c **** #endif
+ 148:rt_thread/src/thread.c **** 
+ 149:rt_thread/src/thread.c ****     /* priority init */
+ 150:rt_thread/src/thread.c ****     RT_ASSERT(priority < RT_THREAD_PRIORITY_MAX);
+ 180              		.loc 1 150 0
+ 181 003c 1F2D     		cmp	r5, #31
+ 182 003e 04D9     		bls	.L8
+ 183              		.loc 1 150 0 is_stmt 0 discriminator 1
+ 184 0040 9622     		movs	r2, #150
+ 185 0042 1549     		ldr	r1, .L11+4
+ARM GAS  /tmp/ccDetQHQ.s 			page 8
+
+
+ 186 0044 1548     		ldr	r0, .L11+8
+ 187 0046 FFF7FEFF 		bl	rt_assert_handler
+ 188              	.LVL21:
+ 189              	.L8:
+ 151:rt_thread/src/thread.c ****     thread->init_priority    = priority;
+ 190              		.loc 1 151 0 is_stmt 1
+ 191 004a 84F83650 		strb	r5, [r4, #54]
+ 152:rt_thread/src/thread.c ****     thread->current_priority = priority;
+ 192              		.loc 1 152 0
+ 193 004e 84F83550 		strb	r5, [r4, #53]
+ 153:rt_thread/src/thread.c **** 
+ 154:rt_thread/src/thread.c ****     thread->number_mask = 0;
+ 194              		.loc 1 154 0
+ 195 0052 0025     		movs	r5, #0
+ 196 0054 A563     		str	r5, [r4, #56]
+ 155:rt_thread/src/thread.c **** #if RT_THREAD_PRIORITY_MAX > 32
+ 156:rt_thread/src/thread.c ****     thread->number = 0;
+ 157:rt_thread/src/thread.c ****     thread->high_mask = 0;
+ 158:rt_thread/src/thread.c **** #endif
+ 159:rt_thread/src/thread.c **** 
+ 160:rt_thread/src/thread.c ****     /* tick init */
+ 161:rt_thread/src/thread.c ****     thread->init_tick      = tick;
+ 197              		.loc 1 161 0
+ 198 0056 A665     		str	r6, [r4, #88]
+ 162:rt_thread/src/thread.c ****     thread->remaining_tick = tick;
+ 199              		.loc 1 162 0
+ 200 0058 E665     		str	r6, [r4, #92]
+ 163:rt_thread/src/thread.c **** 
+ 164:rt_thread/src/thread.c ****     /* error and flags */
+ 165:rt_thread/src/thread.c ****     thread->error = RT_EOK;
+ 201              		.loc 1 165 0
+ 202 005a 2563     		str	r5, [r4, #48]
+ 166:rt_thread/src/thread.c ****     thread->stat  = RT_THREAD_INIT;
+ 203              		.loc 1 166 0
+ 204 005c 84F83450 		strb	r5, [r4, #52]
+ 167:rt_thread/src/thread.c **** 
+ 168:rt_thread/src/thread.c ****     /* initialize cleanup function and user data */
+ 169:rt_thread/src/thread.c ****     thread->cleanup   = 0;
+ 205              		.loc 1 169 0
+ 206 0060 C4F88C50 		str	r5, [r4, #140]
+ 170:rt_thread/src/thread.c ****     thread->user_data = 0;
+ 207              		.loc 1 170 0
+ 208 0064 C4F89050 		str	r5, [r4, #144]
+ 171:rt_thread/src/thread.c **** 
+ 172:rt_thread/src/thread.c ****     /* initialize thread timer */
+ 173:rt_thread/src/thread.c ****     rt_timer_init(&(thread->thread_timer),
+ 209              		.loc 1 173 0
+ 210 0068 0195     		str	r5, [sp, #4]
+ 211 006a 0095     		str	r5, [sp]
+ 212 006c 2346     		mov	r3, r4
+ 213 006e 0C4A     		ldr	r2, .L11+12
+ 214 0070 2146     		mov	r1, r4
+ 215 0072 04F16000 		add	r0, r4, #96
+ 216 0076 FFF7FEFF 		bl	rt_timer_init
+ 217              	.LVL22:
+ 174:rt_thread/src/thread.c ****                   thread->name,
+ 175:rt_thread/src/thread.c ****                   rt_thread_timeout,
+ARM GAS  /tmp/ccDetQHQ.s 			page 9
+
+
+ 176:rt_thread/src/thread.c ****                   thread,
+ 177:rt_thread/src/thread.c ****                   0,
+ 178:rt_thread/src/thread.c ****                   RT_TIMER_FLAG_ONE_SHOT);
+ 179:rt_thread/src/thread.c **** 
+ 180:rt_thread/src/thread.c ****     /* initialize signal */
+ 181:rt_thread/src/thread.c **** #ifdef RT_USING_SIGNALS
+ 182:rt_thread/src/thread.c ****     thread->sig_mask    = 0x00;
+ 218              		.loc 1 182 0
+ 219 007a A564     		str	r5, [r4, #72]
+ 183:rt_thread/src/thread.c ****     thread->sig_pending = 0x00;
+ 220              		.loc 1 183 0
+ 221 007c 6564     		str	r5, [r4, #68]
+ 184:rt_thread/src/thread.c **** 
+ 185:rt_thread/src/thread.c ****     thread->sig_ret     = RT_NULL;
+ 222              		.loc 1 185 0
+ 223 007e E564     		str	r5, [r4, #76]
+ 186:rt_thread/src/thread.c ****     thread->sig_vectors = RT_NULL;
+ 224              		.loc 1 186 0
+ 225 0080 2565     		str	r5, [r4, #80]
+ 187:rt_thread/src/thread.c ****     thread->si_list     = RT_NULL;
+ 226              		.loc 1 187 0
+ 227 0082 6565     		str	r5, [r4, #84]
+ 188:rt_thread/src/thread.c **** #endif
+ 189:rt_thread/src/thread.c **** 
+ 190:rt_thread/src/thread.c **** #ifdef RT_USING_LWP
+ 191:rt_thread/src/thread.c ****     thread->lwp = RT_NULL;
+ 192:rt_thread/src/thread.c **** #endif
+ 193:rt_thread/src/thread.c **** 
+ 194:rt_thread/src/thread.c ****     RT_OBJECT_HOOK_CALL(rt_thread_inited_hook, (thread));
+ 228              		.loc 1 194 0
+ 229 0084 074B     		ldr	r3, .L11+16
+ 230 0086 1B68     		ldr	r3, [r3]
+ 231 0088 0BB1     		cbz	r3, .L9
+ 232              		.loc 1 194 0 is_stmt 0 discriminator 1
+ 233 008a 2046     		mov	r0, r4
+ 234 008c 9847     		blx	r3
+ 235              	.LVL23:
+ 236              	.L9:
+ 195:rt_thread/src/thread.c **** 
+ 196:rt_thread/src/thread.c ****     return RT_EOK;
+ 197:rt_thread/src/thread.c **** }
+ 237              		.loc 1 197 0 is_stmt 1
+ 238 008e 0020     		movs	r0, #0
+ 239 0090 03B0     		add	sp, sp, #12
+ 240              	.LCFI3:
+ 241              		.cfi_def_cfa_offset 20
+ 242              		@ sp needed
+ 243 0092 F0BD     		pop	{r4, r5, r6, r7, pc}
+ 244              	.LVL24:
+ 245              	.L12:
+ 246              		.align	2
+ 247              	.L11:
+ 248 0094 00000000 		.word	rt_thread_exit
+ 249 0098 00000000 		.word	.LANCHOR0
+ 250 009c 00000000 		.word	.LC0
+ 251 00a0 00000000 		.word	rt_thread_timeout
+ 252 00a4 00000000 		.word	.LANCHOR1
+ARM GAS  /tmp/ccDetQHQ.s 			page 10
+
+
+ 253              		.cfi_endproc
+ 254              	.LFE19:
+ 256              		.section	.text.rt_thread_timeout,"ax",%progbits
+ 257              		.align	2
+ 258              		.global	rt_thread_timeout
+ 259              		.thumb
+ 260              		.thumb_func
+ 262              	rt_thread_timeout:
+ 263              	.LFB34:
+ 198:rt_thread/src/thread.c **** 
+ 199:rt_thread/src/thread.c **** /**
+ 200:rt_thread/src/thread.c ****  * @addtogroup Thread
+ 201:rt_thread/src/thread.c ****  */
+ 202:rt_thread/src/thread.c **** 
+ 203:rt_thread/src/thread.c **** /**@{*/
+ 204:rt_thread/src/thread.c **** 
+ 205:rt_thread/src/thread.c **** /**
+ 206:rt_thread/src/thread.c ****  * This function will initialize a thread, normally it's used to initialize a
+ 207:rt_thread/src/thread.c ****  * static thread object.
+ 208:rt_thread/src/thread.c ****  *
+ 209:rt_thread/src/thread.c ****  * @param thread the static thread object
+ 210:rt_thread/src/thread.c ****  * @param name the name of thread, which shall be unique
+ 211:rt_thread/src/thread.c ****  * @param entry the entry function of thread
+ 212:rt_thread/src/thread.c ****  * @param parameter the parameter of thread enter function
+ 213:rt_thread/src/thread.c ****  * @param stack_start the start address of thread stack
+ 214:rt_thread/src/thread.c ****  * @param stack_size the size of thread stack
+ 215:rt_thread/src/thread.c ****  * @param priority the priority of thread
+ 216:rt_thread/src/thread.c ****  * @param tick the time slice if there are same priority thread
+ 217:rt_thread/src/thread.c ****  *
+ 218:rt_thread/src/thread.c ****  * @return the operation status, RT_EOK on OK, -RT_ERROR on error
+ 219:rt_thread/src/thread.c ****  */
+ 220:rt_thread/src/thread.c **** rt_err_t rt_thread_init(struct rt_thread *thread,
+ 221:rt_thread/src/thread.c ****                         const char       *name,
+ 222:rt_thread/src/thread.c ****                         void (*entry)(void *parameter),
+ 223:rt_thread/src/thread.c ****                         void             *parameter,
+ 224:rt_thread/src/thread.c ****                         void             *stack_start,
+ 225:rt_thread/src/thread.c ****                         rt_uint32_t       stack_size,
+ 226:rt_thread/src/thread.c ****                         rt_uint8_t        priority,
+ 227:rt_thread/src/thread.c ****                         rt_uint32_t       tick)
+ 228:rt_thread/src/thread.c **** {
+ 229:rt_thread/src/thread.c ****     /* thread check */
+ 230:rt_thread/src/thread.c ****     RT_ASSERT(thread != RT_NULL);
+ 231:rt_thread/src/thread.c ****     RT_ASSERT(stack_start != RT_NULL);
+ 232:rt_thread/src/thread.c **** 
+ 233:rt_thread/src/thread.c ****     /* initialize thread object */
+ 234:rt_thread/src/thread.c ****     rt_object_init((rt_object_t)thread, RT_Object_Class_Thread, name);
+ 235:rt_thread/src/thread.c **** 
+ 236:rt_thread/src/thread.c ****     return _rt_thread_init(thread,
+ 237:rt_thread/src/thread.c ****                            name,
+ 238:rt_thread/src/thread.c ****                            entry,
+ 239:rt_thread/src/thread.c ****                            parameter,
+ 240:rt_thread/src/thread.c ****                            stack_start,
+ 241:rt_thread/src/thread.c ****                            stack_size,
+ 242:rt_thread/src/thread.c ****                            priority,
+ 243:rt_thread/src/thread.c ****                            tick);
+ 244:rt_thread/src/thread.c **** }
+ 245:rt_thread/src/thread.c **** RTM_EXPORT(rt_thread_init);
+ARM GAS  /tmp/ccDetQHQ.s 			page 11
+
+
+ 246:rt_thread/src/thread.c **** 
+ 247:rt_thread/src/thread.c **** /**
+ 248:rt_thread/src/thread.c ****  * This function will return self thread object
+ 249:rt_thread/src/thread.c ****  *
+ 250:rt_thread/src/thread.c ****  * @return the self thread object
+ 251:rt_thread/src/thread.c ****  */
+ 252:rt_thread/src/thread.c **** rt_thread_t rt_thread_self(void)
+ 253:rt_thread/src/thread.c **** {
+ 254:rt_thread/src/thread.c ****     return rt_current_thread;
+ 255:rt_thread/src/thread.c **** }
+ 256:rt_thread/src/thread.c **** RTM_EXPORT(rt_thread_self);
+ 257:rt_thread/src/thread.c **** 
+ 258:rt_thread/src/thread.c **** /**
+ 259:rt_thread/src/thread.c ****  * This function will start a thread and put it to system ready queue
+ 260:rt_thread/src/thread.c ****  *
+ 261:rt_thread/src/thread.c ****  * @param thread the thread to be started
+ 262:rt_thread/src/thread.c ****  *
+ 263:rt_thread/src/thread.c ****  * @return the operation status, RT_EOK on OK, -RT_ERROR on error
+ 264:rt_thread/src/thread.c ****  */
+ 265:rt_thread/src/thread.c **** rt_err_t rt_thread_startup(rt_thread_t thread)
+ 266:rt_thread/src/thread.c **** {
+ 267:rt_thread/src/thread.c ****     /* thread check */
+ 268:rt_thread/src/thread.c ****     RT_ASSERT(thread != RT_NULL);
+ 269:rt_thread/src/thread.c ****     RT_ASSERT((thread->stat & RT_THREAD_STAT_MASK) == RT_THREAD_INIT);
+ 270:rt_thread/src/thread.c ****     RT_ASSERT(rt_object_get_type((rt_object_t)thread) == RT_Object_Class_Thread);
+ 271:rt_thread/src/thread.c **** 
+ 272:rt_thread/src/thread.c ****     /* set current priority to initialize priority */
+ 273:rt_thread/src/thread.c ****     thread->current_priority = thread->init_priority;
+ 274:rt_thread/src/thread.c **** 
+ 275:rt_thread/src/thread.c ****     /* calculate priority attribute */
+ 276:rt_thread/src/thread.c **** #if RT_THREAD_PRIORITY_MAX > 32
+ 277:rt_thread/src/thread.c ****     thread->number      = thread->current_priority >> 3;            /* 5bit */
+ 278:rt_thread/src/thread.c ****     thread->number_mask = 1L << thread->number;
+ 279:rt_thread/src/thread.c ****     thread->high_mask   = 1L << (thread->current_priority & 0x07);  /* 3bit */
+ 280:rt_thread/src/thread.c **** #else
+ 281:rt_thread/src/thread.c ****     thread->number_mask = 1L << thread->current_priority;
+ 282:rt_thread/src/thread.c **** #endif
+ 283:rt_thread/src/thread.c **** 
+ 284:rt_thread/src/thread.c ****     RT_DEBUG_LOG(RT_DEBUG_THREAD, ("startup a thread:%s with priority:%d\n",
+ 285:rt_thread/src/thread.c ****                                    thread->name, thread->init_priority));
+ 286:rt_thread/src/thread.c ****     /* change thread stat */
+ 287:rt_thread/src/thread.c ****     thread->stat = RT_THREAD_SUSPEND;
+ 288:rt_thread/src/thread.c ****     /* then resume it */
+ 289:rt_thread/src/thread.c ****     rt_thread_resume(thread);
+ 290:rt_thread/src/thread.c ****     if (rt_thread_self() != RT_NULL)
+ 291:rt_thread/src/thread.c ****     {
+ 292:rt_thread/src/thread.c ****         /* do a scheduling */
+ 293:rt_thread/src/thread.c ****         rt_schedule();
+ 294:rt_thread/src/thread.c ****     }
+ 295:rt_thread/src/thread.c **** 
+ 296:rt_thread/src/thread.c ****     return RT_EOK;
+ 297:rt_thread/src/thread.c **** }
+ 298:rt_thread/src/thread.c **** RTM_EXPORT(rt_thread_startup);
+ 299:rt_thread/src/thread.c **** 
+ 300:rt_thread/src/thread.c **** /**
+ 301:rt_thread/src/thread.c ****  * This function will detach a thread. The thread object will be removed from
+ 302:rt_thread/src/thread.c ****  * thread queue and detached/deleted from system object management.
+ARM GAS  /tmp/ccDetQHQ.s 			page 12
+
+
+ 303:rt_thread/src/thread.c ****  *
+ 304:rt_thread/src/thread.c ****  * @param thread the thread to be deleted
+ 305:rt_thread/src/thread.c ****  *
+ 306:rt_thread/src/thread.c ****  * @return the operation status, RT_EOK on OK, -RT_ERROR on error
+ 307:rt_thread/src/thread.c ****  */
+ 308:rt_thread/src/thread.c **** rt_err_t rt_thread_detach(rt_thread_t thread)
+ 309:rt_thread/src/thread.c **** {
+ 310:rt_thread/src/thread.c ****     rt_base_t lock;
+ 311:rt_thread/src/thread.c **** 
+ 312:rt_thread/src/thread.c ****     /* thread check */
+ 313:rt_thread/src/thread.c ****     RT_ASSERT(thread != RT_NULL);
+ 314:rt_thread/src/thread.c ****     RT_ASSERT(rt_object_get_type((rt_object_t)thread) == RT_Object_Class_Thread);
+ 315:rt_thread/src/thread.c ****     RT_ASSERT(rt_object_is_systemobject((rt_object_t)thread));
+ 316:rt_thread/src/thread.c **** 
+ 317:rt_thread/src/thread.c ****     if ((thread->stat & RT_THREAD_STAT_MASK) != RT_THREAD_INIT)
+ 318:rt_thread/src/thread.c ****     {
+ 319:rt_thread/src/thread.c ****         /* remove from schedule */
+ 320:rt_thread/src/thread.c ****         rt_schedule_remove_thread(thread);
+ 321:rt_thread/src/thread.c ****     }
+ 322:rt_thread/src/thread.c **** 
+ 323:rt_thread/src/thread.c ****     /* release thread timer */
+ 324:rt_thread/src/thread.c ****     rt_timer_detach(&(thread->thread_timer));
+ 325:rt_thread/src/thread.c **** 
+ 326:rt_thread/src/thread.c ****     /* change stat */
+ 327:rt_thread/src/thread.c ****     thread->stat = RT_THREAD_CLOSE;
+ 328:rt_thread/src/thread.c **** 
+ 329:rt_thread/src/thread.c ****     if ((rt_object_is_systemobject((rt_object_t)thread) == RT_TRUE) &&
+ 330:rt_thread/src/thread.c ****         thread->cleanup == RT_NULL)
+ 331:rt_thread/src/thread.c ****     {
+ 332:rt_thread/src/thread.c ****         rt_object_detach((rt_object_t)thread);
+ 333:rt_thread/src/thread.c ****     }
+ 334:rt_thread/src/thread.c ****     else
+ 335:rt_thread/src/thread.c ****     {
+ 336:rt_thread/src/thread.c ****         /* disable interrupt */
+ 337:rt_thread/src/thread.c ****         lock = rt_hw_interrupt_disable();
+ 338:rt_thread/src/thread.c ****         /* insert to defunct thread list */
+ 339:rt_thread/src/thread.c ****         rt_list_insert_after(&rt_thread_defunct, &(thread->tlist));
+ 340:rt_thread/src/thread.c ****         /* enable interrupt */
+ 341:rt_thread/src/thread.c ****         rt_hw_interrupt_enable(lock);
+ 342:rt_thread/src/thread.c ****     }
+ 343:rt_thread/src/thread.c **** 
+ 344:rt_thread/src/thread.c ****     return RT_EOK;
+ 345:rt_thread/src/thread.c **** }
+ 346:rt_thread/src/thread.c **** RTM_EXPORT(rt_thread_detach);
+ 347:rt_thread/src/thread.c **** 
+ 348:rt_thread/src/thread.c **** #ifdef RT_USING_HEAP
+ 349:rt_thread/src/thread.c **** /**
+ 350:rt_thread/src/thread.c ****  * This function will create a thread object and allocate thread object memory
+ 351:rt_thread/src/thread.c ****  * and stack.
+ 352:rt_thread/src/thread.c ****  *
+ 353:rt_thread/src/thread.c ****  * @param name the name of thread, which shall be unique
+ 354:rt_thread/src/thread.c ****  * @param entry the entry function of thread
+ 355:rt_thread/src/thread.c ****  * @param parameter the parameter of thread enter function
+ 356:rt_thread/src/thread.c ****  * @param stack_size the size of thread stack
+ 357:rt_thread/src/thread.c ****  * @param priority the priority of thread
+ 358:rt_thread/src/thread.c ****  * @param tick the time slice if there are same priority thread
+ 359:rt_thread/src/thread.c ****  *
+ARM GAS  /tmp/ccDetQHQ.s 			page 13
+
+
+ 360:rt_thread/src/thread.c ****  * @return the created thread object
+ 361:rt_thread/src/thread.c ****  */
+ 362:rt_thread/src/thread.c **** rt_thread_t rt_thread_create(const char *name,
+ 363:rt_thread/src/thread.c ****                              void (*entry)(void *parameter),
+ 364:rt_thread/src/thread.c ****                              void       *parameter,
+ 365:rt_thread/src/thread.c ****                              rt_uint32_t stack_size,
+ 366:rt_thread/src/thread.c ****                              rt_uint8_t  priority,
+ 367:rt_thread/src/thread.c ****                              rt_uint32_t tick)
+ 368:rt_thread/src/thread.c **** {
+ 369:rt_thread/src/thread.c ****     struct rt_thread *thread;
+ 370:rt_thread/src/thread.c ****     void *stack_start;
+ 371:rt_thread/src/thread.c **** 
+ 372:rt_thread/src/thread.c ****     thread = (struct rt_thread *)rt_object_allocate(RT_Object_Class_Thread,
+ 373:rt_thread/src/thread.c ****                                                     name);
+ 374:rt_thread/src/thread.c ****     if (thread == RT_NULL)
+ 375:rt_thread/src/thread.c ****         return RT_NULL;
+ 376:rt_thread/src/thread.c **** 
+ 377:rt_thread/src/thread.c ****     stack_start = (void *)RT_KERNEL_MALLOC(stack_size);
+ 378:rt_thread/src/thread.c ****     if (stack_start == RT_NULL)
+ 379:rt_thread/src/thread.c ****     {
+ 380:rt_thread/src/thread.c ****         /* allocate stack failure */
+ 381:rt_thread/src/thread.c ****         rt_object_delete((rt_object_t)thread);
+ 382:rt_thread/src/thread.c **** 
+ 383:rt_thread/src/thread.c ****         return RT_NULL;
+ 384:rt_thread/src/thread.c ****     }
+ 385:rt_thread/src/thread.c **** 
+ 386:rt_thread/src/thread.c ****     _rt_thread_init(thread,
+ 387:rt_thread/src/thread.c ****                     name,
+ 388:rt_thread/src/thread.c ****                     entry,
+ 389:rt_thread/src/thread.c ****                     parameter,
+ 390:rt_thread/src/thread.c ****                     stack_start,
+ 391:rt_thread/src/thread.c ****                     stack_size,
+ 392:rt_thread/src/thread.c ****                     priority,
+ 393:rt_thread/src/thread.c ****                     tick);
+ 394:rt_thread/src/thread.c **** 
+ 395:rt_thread/src/thread.c ****     return thread;
+ 396:rt_thread/src/thread.c **** }
+ 397:rt_thread/src/thread.c **** RTM_EXPORT(rt_thread_create);
+ 398:rt_thread/src/thread.c **** 
+ 399:rt_thread/src/thread.c **** /**
+ 400:rt_thread/src/thread.c ****  * This function will delete a thread. The thread object will be removed from
+ 401:rt_thread/src/thread.c ****  * thread queue and deleted from system object management in the idle thread.
+ 402:rt_thread/src/thread.c ****  *
+ 403:rt_thread/src/thread.c ****  * @param thread the thread to be deleted
+ 404:rt_thread/src/thread.c ****  *
+ 405:rt_thread/src/thread.c ****  * @return the operation status, RT_EOK on OK, -RT_ERROR on error
+ 406:rt_thread/src/thread.c ****  */
+ 407:rt_thread/src/thread.c **** rt_err_t rt_thread_delete(rt_thread_t thread)
+ 408:rt_thread/src/thread.c **** {
+ 409:rt_thread/src/thread.c ****     rt_base_t lock;
+ 410:rt_thread/src/thread.c **** 
+ 411:rt_thread/src/thread.c ****     /* thread check */
+ 412:rt_thread/src/thread.c ****     RT_ASSERT(thread != RT_NULL);
+ 413:rt_thread/src/thread.c ****     RT_ASSERT(rt_object_get_type((rt_object_t)thread) == RT_Object_Class_Thread);
+ 414:rt_thread/src/thread.c ****     RT_ASSERT(rt_object_is_systemobject((rt_object_t)thread) == RT_FALSE);
+ 415:rt_thread/src/thread.c **** 
+ 416:rt_thread/src/thread.c ****     if ((thread->stat & RT_THREAD_STAT_MASK) != RT_THREAD_INIT)
+ARM GAS  /tmp/ccDetQHQ.s 			page 14
+
+
+ 417:rt_thread/src/thread.c ****     {
+ 418:rt_thread/src/thread.c ****         /* remove from schedule */
+ 419:rt_thread/src/thread.c ****         rt_schedule_remove_thread(thread);
+ 420:rt_thread/src/thread.c ****     }
+ 421:rt_thread/src/thread.c **** 
+ 422:rt_thread/src/thread.c ****     /* release thread timer */
+ 423:rt_thread/src/thread.c ****     rt_timer_detach(&(thread->thread_timer));
+ 424:rt_thread/src/thread.c **** 
+ 425:rt_thread/src/thread.c ****     /* disable interrupt */
+ 426:rt_thread/src/thread.c ****     lock = rt_hw_interrupt_disable();
+ 427:rt_thread/src/thread.c **** 
+ 428:rt_thread/src/thread.c ****     /* change stat */
+ 429:rt_thread/src/thread.c ****     thread->stat = RT_THREAD_CLOSE;
+ 430:rt_thread/src/thread.c **** 
+ 431:rt_thread/src/thread.c ****     /* insert to defunct thread list */
+ 432:rt_thread/src/thread.c ****     rt_list_insert_after(&rt_thread_defunct, &(thread->tlist));
+ 433:rt_thread/src/thread.c **** 
+ 434:rt_thread/src/thread.c ****     /* enable interrupt */
+ 435:rt_thread/src/thread.c ****     rt_hw_interrupt_enable(lock);
+ 436:rt_thread/src/thread.c **** 
+ 437:rt_thread/src/thread.c ****     return RT_EOK;
+ 438:rt_thread/src/thread.c **** }
+ 439:rt_thread/src/thread.c **** RTM_EXPORT(rt_thread_delete);
+ 440:rt_thread/src/thread.c **** #endif
+ 441:rt_thread/src/thread.c **** 
+ 442:rt_thread/src/thread.c **** /**
+ 443:rt_thread/src/thread.c ****  * This function will let current thread yield processor, and scheduler will
+ 444:rt_thread/src/thread.c ****  * choose a highest thread to run. After yield processor, the current thread
+ 445:rt_thread/src/thread.c ****  * is still in READY state.
+ 446:rt_thread/src/thread.c ****  *
+ 447:rt_thread/src/thread.c ****  * @return RT_EOK
+ 448:rt_thread/src/thread.c ****  */
+ 449:rt_thread/src/thread.c **** rt_err_t rt_thread_yield(void)
+ 450:rt_thread/src/thread.c **** {
+ 451:rt_thread/src/thread.c ****     register rt_base_t level;
+ 452:rt_thread/src/thread.c ****     struct rt_thread *thread;
+ 453:rt_thread/src/thread.c **** 
+ 454:rt_thread/src/thread.c ****     /* disable interrupt */
+ 455:rt_thread/src/thread.c ****     level = rt_hw_interrupt_disable();
+ 456:rt_thread/src/thread.c **** 
+ 457:rt_thread/src/thread.c ****     /* set to current thread */
+ 458:rt_thread/src/thread.c ****     thread = rt_current_thread;
+ 459:rt_thread/src/thread.c **** 
+ 460:rt_thread/src/thread.c ****     /* if the thread stat is READY and on ready queue list */
+ 461:rt_thread/src/thread.c ****     if ((thread->stat & RT_THREAD_STAT_MASK) == RT_THREAD_READY &&
+ 462:rt_thread/src/thread.c ****         thread->tlist.next != thread->tlist.prev)
+ 463:rt_thread/src/thread.c ****     {
+ 464:rt_thread/src/thread.c ****         /* remove thread from thread list */
+ 465:rt_thread/src/thread.c ****         rt_list_remove(&(thread->tlist));
+ 466:rt_thread/src/thread.c **** 
+ 467:rt_thread/src/thread.c ****         /* put thread to end of ready queue */
+ 468:rt_thread/src/thread.c ****         rt_list_insert_before(&(rt_thread_priority_table[thread->current_priority]),
+ 469:rt_thread/src/thread.c ****                               &(thread->tlist));
+ 470:rt_thread/src/thread.c **** 
+ 471:rt_thread/src/thread.c ****         /* enable interrupt */
+ 472:rt_thread/src/thread.c ****         rt_hw_interrupt_enable(level);
+ 473:rt_thread/src/thread.c **** 
+ARM GAS  /tmp/ccDetQHQ.s 			page 15
+
+
+ 474:rt_thread/src/thread.c ****         rt_schedule();
+ 475:rt_thread/src/thread.c **** 
+ 476:rt_thread/src/thread.c ****         return RT_EOK;
+ 477:rt_thread/src/thread.c ****     }
+ 478:rt_thread/src/thread.c **** 
+ 479:rt_thread/src/thread.c ****     /* enable interrupt */
+ 480:rt_thread/src/thread.c ****     rt_hw_interrupt_enable(level);
+ 481:rt_thread/src/thread.c **** 
+ 482:rt_thread/src/thread.c ****     return RT_EOK;
+ 483:rt_thread/src/thread.c **** }
+ 484:rt_thread/src/thread.c **** RTM_EXPORT(rt_thread_yield);
+ 485:rt_thread/src/thread.c **** 
+ 486:rt_thread/src/thread.c **** /**
+ 487:rt_thread/src/thread.c ****  * This function will let current thread sleep for some ticks.
+ 488:rt_thread/src/thread.c ****  *
+ 489:rt_thread/src/thread.c ****  * @param tick the sleep ticks
+ 490:rt_thread/src/thread.c ****  *
+ 491:rt_thread/src/thread.c ****  * @return RT_EOK
+ 492:rt_thread/src/thread.c ****  */
+ 493:rt_thread/src/thread.c **** rt_err_t rt_thread_sleep(rt_tick_t tick)
+ 494:rt_thread/src/thread.c **** {
+ 495:rt_thread/src/thread.c ****     register rt_base_t temp;
+ 496:rt_thread/src/thread.c ****     struct rt_thread *thread;
+ 497:rt_thread/src/thread.c **** 
+ 498:rt_thread/src/thread.c ****     /* disable interrupt */
+ 499:rt_thread/src/thread.c ****     temp = rt_hw_interrupt_disable();
+ 500:rt_thread/src/thread.c ****     /* set to current thread */
+ 501:rt_thread/src/thread.c ****     thread = rt_current_thread;
+ 502:rt_thread/src/thread.c ****     RT_ASSERT(thread != RT_NULL);
+ 503:rt_thread/src/thread.c ****     RT_ASSERT(rt_object_get_type((rt_object_t)thread) == RT_Object_Class_Thread);
+ 504:rt_thread/src/thread.c **** 
+ 505:rt_thread/src/thread.c ****     /* suspend thread */
+ 506:rt_thread/src/thread.c ****     rt_thread_suspend(thread);
+ 507:rt_thread/src/thread.c **** 
+ 508:rt_thread/src/thread.c ****     /* reset the timeout of thread timer and start it */
+ 509:rt_thread/src/thread.c ****     rt_timer_control(&(thread->thread_timer), RT_TIMER_CTRL_SET_TIME, &tick);
+ 510:rt_thread/src/thread.c ****     rt_timer_start(&(thread->thread_timer));
+ 511:rt_thread/src/thread.c **** 
+ 512:rt_thread/src/thread.c ****     /* enable interrupt */
+ 513:rt_thread/src/thread.c ****     rt_hw_interrupt_enable(temp);
+ 514:rt_thread/src/thread.c **** 
+ 515:rt_thread/src/thread.c ****     rt_schedule();
+ 516:rt_thread/src/thread.c **** 
+ 517:rt_thread/src/thread.c ****     /* clear error number of this thread to RT_EOK */
+ 518:rt_thread/src/thread.c ****     if (thread->error == -RT_ETIMEOUT)
+ 519:rt_thread/src/thread.c ****         thread->error = RT_EOK;
+ 520:rt_thread/src/thread.c **** 
+ 521:rt_thread/src/thread.c ****     return RT_EOK;
+ 522:rt_thread/src/thread.c **** }
+ 523:rt_thread/src/thread.c **** 
+ 524:rt_thread/src/thread.c **** /**
+ 525:rt_thread/src/thread.c ****  * This function will let current thread delay for some ticks.
+ 526:rt_thread/src/thread.c ****  *
+ 527:rt_thread/src/thread.c ****  * @param tick the delay ticks
+ 528:rt_thread/src/thread.c ****  *
+ 529:rt_thread/src/thread.c ****  * @return RT_EOK
+ 530:rt_thread/src/thread.c ****  */
+ARM GAS  /tmp/ccDetQHQ.s 			page 16
+
+
+ 531:rt_thread/src/thread.c **** rt_err_t rt_thread_delay(rt_tick_t tick)
+ 532:rt_thread/src/thread.c **** {
+ 533:rt_thread/src/thread.c ****     return rt_thread_sleep(tick);
+ 534:rt_thread/src/thread.c **** }
+ 535:rt_thread/src/thread.c **** RTM_EXPORT(rt_thread_delay);
+ 536:rt_thread/src/thread.c **** 
+ 537:rt_thread/src/thread.c **** /**
+ 538:rt_thread/src/thread.c ****  * This function will let current thread delay until (*tick + inc_tick).
+ 539:rt_thread/src/thread.c ****  *
+ 540:rt_thread/src/thread.c ****  * @param tick the tick of last wakeup.
+ 541:rt_thread/src/thread.c ****  * @param inc_tick the increment tick
+ 542:rt_thread/src/thread.c ****  *
+ 543:rt_thread/src/thread.c ****  * @return RT_EOK
+ 544:rt_thread/src/thread.c ****  */
+ 545:rt_thread/src/thread.c **** rt_err_t rt_thread_delay_until(rt_tick_t *tick, rt_tick_t inc_tick)
+ 546:rt_thread/src/thread.c **** {
+ 547:rt_thread/src/thread.c ****     register rt_base_t level;
+ 548:rt_thread/src/thread.c ****     struct rt_thread *thread;
+ 549:rt_thread/src/thread.c **** 
+ 550:rt_thread/src/thread.c ****     RT_ASSERT(tick != RT_NULL);
+ 551:rt_thread/src/thread.c **** 
+ 552:rt_thread/src/thread.c ****     /* set to current thread */
+ 553:rt_thread/src/thread.c ****     thread = rt_thread_self();
+ 554:rt_thread/src/thread.c ****     RT_ASSERT(thread != RT_NULL);
+ 555:rt_thread/src/thread.c ****     RT_ASSERT(rt_object_get_type((rt_object_t)thread) == RT_Object_Class_Thread);
+ 556:rt_thread/src/thread.c **** 
+ 557:rt_thread/src/thread.c ****     /* disable interrupt */
+ 558:rt_thread/src/thread.c ****     level = rt_hw_interrupt_disable();
+ 559:rt_thread/src/thread.c **** 
+ 560:rt_thread/src/thread.c ****     if (rt_tick_get() - *tick < inc_tick)
+ 561:rt_thread/src/thread.c ****     {
+ 562:rt_thread/src/thread.c ****         *tick = rt_tick_get() - *tick + inc_tick;
+ 563:rt_thread/src/thread.c **** 
+ 564:rt_thread/src/thread.c ****         /* suspend thread */
+ 565:rt_thread/src/thread.c ****         rt_thread_suspend(thread);
+ 566:rt_thread/src/thread.c **** 
+ 567:rt_thread/src/thread.c ****         /* reset the timeout of thread timer and start it */
+ 568:rt_thread/src/thread.c ****         rt_timer_control(&(thread->thread_timer), RT_TIMER_CTRL_SET_TIME, tick);
+ 569:rt_thread/src/thread.c ****         rt_timer_start(&(thread->thread_timer));
+ 570:rt_thread/src/thread.c **** 
+ 571:rt_thread/src/thread.c ****         /* enable interrupt */
+ 572:rt_thread/src/thread.c ****         rt_hw_interrupt_enable(level);
+ 573:rt_thread/src/thread.c **** 
+ 574:rt_thread/src/thread.c ****         rt_schedule();
+ 575:rt_thread/src/thread.c **** 
+ 576:rt_thread/src/thread.c ****         /* clear error number of this thread to RT_EOK */
+ 577:rt_thread/src/thread.c ****         if (thread->error == -RT_ETIMEOUT)
+ 578:rt_thread/src/thread.c ****         {
+ 579:rt_thread/src/thread.c ****             thread->error = RT_EOK;
+ 580:rt_thread/src/thread.c ****         }
+ 581:rt_thread/src/thread.c ****     }
+ 582:rt_thread/src/thread.c ****     else
+ 583:rt_thread/src/thread.c ****     {
+ 584:rt_thread/src/thread.c ****         rt_hw_interrupt_enable(level);
+ 585:rt_thread/src/thread.c ****     }
+ 586:rt_thread/src/thread.c **** 
+ 587:rt_thread/src/thread.c ****     /* get the wakeup tick */
+ARM GAS  /tmp/ccDetQHQ.s 			page 17
+
+
+ 588:rt_thread/src/thread.c ****     *tick = rt_tick_get();
+ 589:rt_thread/src/thread.c **** 
+ 590:rt_thread/src/thread.c ****     return RT_EOK;
+ 591:rt_thread/src/thread.c **** }
+ 592:rt_thread/src/thread.c **** RTM_EXPORT(rt_thread_delay_until);
+ 593:rt_thread/src/thread.c **** 
+ 594:rt_thread/src/thread.c **** /**
+ 595:rt_thread/src/thread.c ****  * This function will let current thread delay for some milliseconds.
+ 596:rt_thread/src/thread.c ****  *
+ 597:rt_thread/src/thread.c ****  * @param tick the delay time
+ 598:rt_thread/src/thread.c ****  *
+ 599:rt_thread/src/thread.c ****  * @return RT_EOK
+ 600:rt_thread/src/thread.c ****  */
+ 601:rt_thread/src/thread.c **** rt_err_t rt_thread_mdelay(rt_int32_t ms)
+ 602:rt_thread/src/thread.c **** {
+ 603:rt_thread/src/thread.c ****     rt_tick_t tick;
+ 604:rt_thread/src/thread.c **** 
+ 605:rt_thread/src/thread.c ****     tick = rt_tick_from_millisecond(ms);
+ 606:rt_thread/src/thread.c **** 
+ 607:rt_thread/src/thread.c ****     return rt_thread_sleep(tick);
+ 608:rt_thread/src/thread.c **** }
+ 609:rt_thread/src/thread.c **** RTM_EXPORT(rt_thread_mdelay);
+ 610:rt_thread/src/thread.c **** 
+ 611:rt_thread/src/thread.c **** /**
+ 612:rt_thread/src/thread.c ****  * This function will control thread behaviors according to control command.
+ 613:rt_thread/src/thread.c ****  *
+ 614:rt_thread/src/thread.c ****  * @param thread the specified thread to be controlled
+ 615:rt_thread/src/thread.c ****  * @param cmd the control command, which includes
+ 616:rt_thread/src/thread.c ****  *  RT_THREAD_CTRL_CHANGE_PRIORITY for changing priority level of thread;
+ 617:rt_thread/src/thread.c ****  *  RT_THREAD_CTRL_STARTUP for starting a thread;
+ 618:rt_thread/src/thread.c ****  *  RT_THREAD_CTRL_CLOSE for delete a thread.
+ 619:rt_thread/src/thread.c ****  * @param arg the argument of control command
+ 620:rt_thread/src/thread.c ****  *
+ 621:rt_thread/src/thread.c ****  * @return RT_EOK
+ 622:rt_thread/src/thread.c ****  */
+ 623:rt_thread/src/thread.c **** rt_err_t rt_thread_control(rt_thread_t thread, int cmd, void *arg)
+ 624:rt_thread/src/thread.c **** {
+ 625:rt_thread/src/thread.c ****     register rt_base_t temp;
+ 626:rt_thread/src/thread.c **** 
+ 627:rt_thread/src/thread.c ****     /* thread check */
+ 628:rt_thread/src/thread.c ****     RT_ASSERT(thread != RT_NULL);
+ 629:rt_thread/src/thread.c ****     RT_ASSERT(rt_object_get_type((rt_object_t)thread) == RT_Object_Class_Thread);
+ 630:rt_thread/src/thread.c **** 
+ 631:rt_thread/src/thread.c ****     switch (cmd)
+ 632:rt_thread/src/thread.c ****     {
+ 633:rt_thread/src/thread.c ****     case RT_THREAD_CTRL_CHANGE_PRIORITY:
+ 634:rt_thread/src/thread.c ****         /* disable interrupt */
+ 635:rt_thread/src/thread.c ****         temp = rt_hw_interrupt_disable();
+ 636:rt_thread/src/thread.c **** 
+ 637:rt_thread/src/thread.c ****         /* for ready thread, change queue */
+ 638:rt_thread/src/thread.c ****         if ((thread->stat & RT_THREAD_STAT_MASK) == RT_THREAD_READY)
+ 639:rt_thread/src/thread.c ****         {
+ 640:rt_thread/src/thread.c ****             /* remove thread from schedule queue first */
+ 641:rt_thread/src/thread.c ****             rt_schedule_remove_thread(thread);
+ 642:rt_thread/src/thread.c **** 
+ 643:rt_thread/src/thread.c ****             /* change thread priority */
+ 644:rt_thread/src/thread.c ****             thread->current_priority = *(rt_uint8_t *)arg;
+ARM GAS  /tmp/ccDetQHQ.s 			page 18
+
+
+ 645:rt_thread/src/thread.c **** 
+ 646:rt_thread/src/thread.c ****             /* recalculate priority attribute */
+ 647:rt_thread/src/thread.c **** #if RT_THREAD_PRIORITY_MAX > 32
+ 648:rt_thread/src/thread.c ****             thread->number      = thread->current_priority >> 3;            /* 5bit */
+ 649:rt_thread/src/thread.c ****             thread->number_mask = 1 << thread->number;
+ 650:rt_thread/src/thread.c ****             thread->high_mask   = 1 << (thread->current_priority & 0x07);   /* 3bit */
+ 651:rt_thread/src/thread.c **** #else
+ 652:rt_thread/src/thread.c ****             thread->number_mask = 1 << thread->current_priority;
+ 653:rt_thread/src/thread.c **** #endif
+ 654:rt_thread/src/thread.c **** 
+ 655:rt_thread/src/thread.c ****             /* insert thread to schedule queue again */
+ 656:rt_thread/src/thread.c ****             rt_schedule_insert_thread(thread);
+ 657:rt_thread/src/thread.c ****         }
+ 658:rt_thread/src/thread.c ****         else
+ 659:rt_thread/src/thread.c ****         {
+ 660:rt_thread/src/thread.c ****             thread->current_priority = *(rt_uint8_t *)arg;
+ 661:rt_thread/src/thread.c **** 
+ 662:rt_thread/src/thread.c ****             /* recalculate priority attribute */
+ 663:rt_thread/src/thread.c **** #if RT_THREAD_PRIORITY_MAX > 32
+ 664:rt_thread/src/thread.c ****             thread->number      = thread->current_priority >> 3;            /* 5bit */
+ 665:rt_thread/src/thread.c ****             thread->number_mask = 1 << thread->number;
+ 666:rt_thread/src/thread.c ****             thread->high_mask   = 1 << (thread->current_priority & 0x07);   /* 3bit */
+ 667:rt_thread/src/thread.c **** #else
+ 668:rt_thread/src/thread.c ****             thread->number_mask = 1 << thread->current_priority;
+ 669:rt_thread/src/thread.c **** #endif
+ 670:rt_thread/src/thread.c ****         }
+ 671:rt_thread/src/thread.c **** 
+ 672:rt_thread/src/thread.c ****         /* enable interrupt */
+ 673:rt_thread/src/thread.c ****         rt_hw_interrupt_enable(temp);
+ 674:rt_thread/src/thread.c ****         break;
+ 675:rt_thread/src/thread.c **** 
+ 676:rt_thread/src/thread.c ****     case RT_THREAD_CTRL_STARTUP:
+ 677:rt_thread/src/thread.c ****         return rt_thread_startup(thread);
+ 678:rt_thread/src/thread.c **** 
+ 679:rt_thread/src/thread.c **** #ifdef RT_USING_HEAP
+ 680:rt_thread/src/thread.c ****     case RT_THREAD_CTRL_CLOSE:
+ 681:rt_thread/src/thread.c ****         return rt_thread_delete(thread);
+ 682:rt_thread/src/thread.c **** #endif
+ 683:rt_thread/src/thread.c **** 
+ 684:rt_thread/src/thread.c ****     default:
+ 685:rt_thread/src/thread.c ****         break;
+ 686:rt_thread/src/thread.c ****     }
+ 687:rt_thread/src/thread.c **** 
+ 688:rt_thread/src/thread.c ****     return RT_EOK;
+ 689:rt_thread/src/thread.c **** }
+ 690:rt_thread/src/thread.c **** RTM_EXPORT(rt_thread_control);
+ 691:rt_thread/src/thread.c **** 
+ 692:rt_thread/src/thread.c **** /**
+ 693:rt_thread/src/thread.c ****  * This function will suspend the specified thread.
+ 694:rt_thread/src/thread.c ****  *
+ 695:rt_thread/src/thread.c ****  * @param thread the thread to be suspended
+ 696:rt_thread/src/thread.c ****  *
+ 697:rt_thread/src/thread.c ****  * @return the operation status, RT_EOK on OK, -RT_ERROR on error
+ 698:rt_thread/src/thread.c ****  *
+ 699:rt_thread/src/thread.c ****  * @note if suspend self thread, after this function call, the
+ 700:rt_thread/src/thread.c ****  * rt_schedule() must be invoked.
+ 701:rt_thread/src/thread.c ****  */
+ARM GAS  /tmp/ccDetQHQ.s 			page 19
+
+
+ 702:rt_thread/src/thread.c **** rt_err_t rt_thread_suspend(rt_thread_t thread)
+ 703:rt_thread/src/thread.c **** {
+ 704:rt_thread/src/thread.c ****     register rt_base_t temp;
+ 705:rt_thread/src/thread.c **** 
+ 706:rt_thread/src/thread.c ****     /* thread check */
+ 707:rt_thread/src/thread.c ****     RT_ASSERT(thread != RT_NULL);
+ 708:rt_thread/src/thread.c ****     RT_ASSERT(rt_object_get_type((rt_object_t)thread) == RT_Object_Class_Thread);
+ 709:rt_thread/src/thread.c **** 
+ 710:rt_thread/src/thread.c ****     RT_DEBUG_LOG(RT_DEBUG_THREAD, ("thread suspend:  %s\n", thread->name));
+ 711:rt_thread/src/thread.c **** 
+ 712:rt_thread/src/thread.c ****     if ((thread->stat & RT_THREAD_STAT_MASK) != RT_THREAD_READY)
+ 713:rt_thread/src/thread.c ****     {
+ 714:rt_thread/src/thread.c ****         RT_DEBUG_LOG(RT_DEBUG_THREAD, ("thread suspend: thread disorder, 0x%2x\n",
+ 715:rt_thread/src/thread.c ****                                        thread->stat));
+ 716:rt_thread/src/thread.c **** 
+ 717:rt_thread/src/thread.c ****         return -RT_ERROR;
+ 718:rt_thread/src/thread.c ****     }
+ 719:rt_thread/src/thread.c **** 
+ 720:rt_thread/src/thread.c ****     /* disable interrupt */
+ 721:rt_thread/src/thread.c ****     temp = rt_hw_interrupt_disable();
+ 722:rt_thread/src/thread.c **** 
+ 723:rt_thread/src/thread.c ****     /* change thread stat */
+ 724:rt_thread/src/thread.c ****     thread->stat = RT_THREAD_SUSPEND | (thread->stat & ~RT_THREAD_STAT_MASK);
+ 725:rt_thread/src/thread.c ****     rt_schedule_remove_thread(thread);
+ 726:rt_thread/src/thread.c **** 
+ 727:rt_thread/src/thread.c ****     /* stop thread timer anyway */
+ 728:rt_thread/src/thread.c ****     rt_timer_stop(&(thread->thread_timer));
+ 729:rt_thread/src/thread.c **** 
+ 730:rt_thread/src/thread.c ****     /* enable interrupt */
+ 731:rt_thread/src/thread.c ****     rt_hw_interrupt_enable(temp);
+ 732:rt_thread/src/thread.c **** 
+ 733:rt_thread/src/thread.c ****     RT_OBJECT_HOOK_CALL(rt_thread_suspend_hook, (thread));
+ 734:rt_thread/src/thread.c ****     return RT_EOK;
+ 735:rt_thread/src/thread.c **** }
+ 736:rt_thread/src/thread.c **** RTM_EXPORT(rt_thread_suspend);
+ 737:rt_thread/src/thread.c **** 
+ 738:rt_thread/src/thread.c **** /**
+ 739:rt_thread/src/thread.c ****  * This function will resume a thread and put it to system ready queue.
+ 740:rt_thread/src/thread.c ****  *
+ 741:rt_thread/src/thread.c ****  * @param thread the thread to be resumed
+ 742:rt_thread/src/thread.c ****  *
+ 743:rt_thread/src/thread.c ****  * @return the operation status, RT_EOK on OK, -RT_ERROR on error
+ 744:rt_thread/src/thread.c ****  */
+ 745:rt_thread/src/thread.c **** rt_err_t rt_thread_resume(rt_thread_t thread)
+ 746:rt_thread/src/thread.c **** {
+ 747:rt_thread/src/thread.c ****     register rt_base_t temp;
+ 748:rt_thread/src/thread.c **** 
+ 749:rt_thread/src/thread.c ****     /* thread check */
+ 750:rt_thread/src/thread.c ****     RT_ASSERT(thread != RT_NULL);
+ 751:rt_thread/src/thread.c ****     RT_ASSERT(rt_object_get_type((rt_object_t)thread) == RT_Object_Class_Thread);
+ 752:rt_thread/src/thread.c **** 
+ 753:rt_thread/src/thread.c ****     RT_DEBUG_LOG(RT_DEBUG_THREAD, ("thread resume:  %s\n", thread->name));
+ 754:rt_thread/src/thread.c **** 
+ 755:rt_thread/src/thread.c ****     if ((thread->stat & RT_THREAD_STAT_MASK) != RT_THREAD_SUSPEND)
+ 756:rt_thread/src/thread.c ****     {
+ 757:rt_thread/src/thread.c ****         RT_DEBUG_LOG(RT_DEBUG_THREAD, ("thread resume: thread disorder, %d\n",
+ 758:rt_thread/src/thread.c ****                                        thread->stat));
+ARM GAS  /tmp/ccDetQHQ.s 			page 20
+
+
+ 759:rt_thread/src/thread.c **** 
+ 760:rt_thread/src/thread.c ****         return -RT_ERROR;
+ 761:rt_thread/src/thread.c ****     }
+ 762:rt_thread/src/thread.c **** 
+ 763:rt_thread/src/thread.c ****     /* disable interrupt */
+ 764:rt_thread/src/thread.c ****     temp = rt_hw_interrupt_disable();
+ 765:rt_thread/src/thread.c **** 
+ 766:rt_thread/src/thread.c ****     /* remove from suspend list */
+ 767:rt_thread/src/thread.c ****     rt_list_remove(&(thread->tlist));
+ 768:rt_thread/src/thread.c **** 
+ 769:rt_thread/src/thread.c ****     rt_timer_stop(&thread->thread_timer);
+ 770:rt_thread/src/thread.c **** 
+ 771:rt_thread/src/thread.c ****     /* enable interrupt */
+ 772:rt_thread/src/thread.c ****     rt_hw_interrupt_enable(temp);
+ 773:rt_thread/src/thread.c **** 
+ 774:rt_thread/src/thread.c ****     /* insert to schedule ready list */
+ 775:rt_thread/src/thread.c ****     rt_schedule_insert_thread(thread);
+ 776:rt_thread/src/thread.c **** 
+ 777:rt_thread/src/thread.c ****     RT_OBJECT_HOOK_CALL(rt_thread_resume_hook, (thread));
+ 778:rt_thread/src/thread.c ****     return RT_EOK;
+ 779:rt_thread/src/thread.c **** }
+ 780:rt_thread/src/thread.c **** RTM_EXPORT(rt_thread_resume);
+ 781:rt_thread/src/thread.c **** 
+ 782:rt_thread/src/thread.c **** /**
+ 783:rt_thread/src/thread.c ****  * This function is the timeout function for thread, normally which is invoked
+ 784:rt_thread/src/thread.c ****  * when thread is timeout to wait some resource.
+ 785:rt_thread/src/thread.c ****  *
+ 786:rt_thread/src/thread.c ****  * @param parameter the parameter of thread timeout function
+ 787:rt_thread/src/thread.c ****  */
+ 788:rt_thread/src/thread.c **** void rt_thread_timeout(void *parameter)
+ 789:rt_thread/src/thread.c **** {
+ 264              		.loc 1 789 0
+ 265              		.cfi_startproc
+ 266              		@ args = 0, pretend = 0, frame = 0
+ 267              		@ frame_needed = 0, uses_anonymous_args = 0
+ 268              	.LVL25:
+ 269 0000 10B5     		push	{r4, lr}
+ 270              	.LCFI4:
+ 271              		.cfi_def_cfa_offset 8
+ 272              		.cfi_offset 4, -8
+ 273              		.cfi_offset 14, -4
+ 274              	.LVL26:
+ 790:rt_thread/src/thread.c ****     struct rt_thread *thread;
+ 791:rt_thread/src/thread.c **** 
+ 792:rt_thread/src/thread.c ****     thread = (struct rt_thread *)parameter;
+ 793:rt_thread/src/thread.c **** 
+ 794:rt_thread/src/thread.c ****     /* thread check */
+ 795:rt_thread/src/thread.c ****     RT_ASSERT(thread != RT_NULL);
+ 275              		.loc 1 795 0
+ 276 0002 0446     		mov	r4, r0
+ 277 0004 28B9     		cbnz	r0, .L14
+ 278              		.loc 1 795 0 is_stmt 0 discriminator 1
+ 279 0006 40F21B32 		movw	r2, #795
+ 280 000a 1749     		ldr	r1, .L18
+ 281 000c 1748     		ldr	r0, .L18+4
+ 282              	.LVL27:
+ 283 000e FFF7FEFF 		bl	rt_assert_handler
+ARM GAS  /tmp/ccDetQHQ.s 			page 21
+
+
+ 284              	.LVL28:
+ 285              	.L14:
+ 796:rt_thread/src/thread.c ****     RT_ASSERT((thread->stat & RT_THREAD_STAT_MASK) == RT_THREAD_SUSPEND);
+ 286              		.loc 1 796 0 is_stmt 1
+ 287 0012 94F83430 		ldrb	r3, [r4, #52]	@ zero_extendqisi2
+ 288 0016 03F00F03 		and	r3, r3, #15
+ 289 001a 022B     		cmp	r3, #2
+ 290 001c 05D0     		beq	.L15
+ 291              		.loc 1 796 0 is_stmt 0 discriminator 1
+ 292 001e 4FF44772 		mov	r2, #796
+ 293 0022 1149     		ldr	r1, .L18
+ 294 0024 1248     		ldr	r0, .L18+8
+ 295 0026 FFF7FEFF 		bl	rt_assert_handler
+ 296              	.LVL29:
+ 297              	.L15:
+ 797:rt_thread/src/thread.c ****     RT_ASSERT(rt_object_get_type((rt_object_t)thread) == RT_Object_Class_Thread);
+ 298              		.loc 1 797 0 is_stmt 1
+ 299 002a 2046     		mov	r0, r4
+ 300 002c FFF7FEFF 		bl	rt_object_get_type
+ 301              	.LVL30:
+ 302 0030 0128     		cmp	r0, #1
+ 303 0032 05D0     		beq	.L16
+ 304              		.loc 1 797 0 is_stmt 0 discriminator 1
+ 305 0034 40F21D32 		movw	r2, #797
+ 306 0038 0B49     		ldr	r1, .L18
+ 307 003a 0E48     		ldr	r0, .L18+12
+ 308 003c FFF7FEFF 		bl	rt_assert_handler
+ 309              	.LVL31:
+ 310              	.L16:
+ 798:rt_thread/src/thread.c **** 
+ 799:rt_thread/src/thread.c ****     /* set error number */
+ 800:rt_thread/src/thread.c ****     thread->error = -RT_ETIMEOUT;
+ 311              		.loc 1 800 0 is_stmt 1
+ 312 0040 6FF00103 		mvn	r3, #1
+ 313 0044 2363     		str	r3, [r4, #48]
+ 801:rt_thread/src/thread.c **** 
+ 802:rt_thread/src/thread.c ****     /* remove from suspend list */
+ 803:rt_thread/src/thread.c ****     rt_list_remove(&(thread->tlist));
+ 314              		.loc 1 803 0
+ 315 0046 04F11403 		add	r3, r4, #20
+ 316              	.LVL32:
+ 317              	.LBB22:
+ 318              	.LBB23:
+  65:rt_thread/include/rtservice.h **** }
+  66:rt_thread/include/rtservice.h **** 
+  67:rt_thread/include/rtservice.h **** /**
+  68:rt_thread/include/rtservice.h ****  * @brief insert a node before a list
+  69:rt_thread/include/rtservice.h ****  *
+  70:rt_thread/include/rtservice.h ****  * @param n new node to be inserted
+  71:rt_thread/include/rtservice.h ****  * @param l list to insert it
+  72:rt_thread/include/rtservice.h ****  */
+  73:rt_thread/include/rtservice.h **** rt_inline void rt_list_insert_before(rt_list_t *l, rt_list_t *n)
+  74:rt_thread/include/rtservice.h **** {
+  75:rt_thread/include/rtservice.h ****     l->prev->next = n;
+  76:rt_thread/include/rtservice.h ****     n->prev = l->prev;
+  77:rt_thread/include/rtservice.h **** 
+  78:rt_thread/include/rtservice.h ****     l->prev = n;
+ARM GAS  /tmp/ccDetQHQ.s 			page 22
+
+
+  79:rt_thread/include/rtservice.h ****     n->next = l;
+  80:rt_thread/include/rtservice.h **** }
+  81:rt_thread/include/rtservice.h **** 
+  82:rt_thread/include/rtservice.h **** /**
+  83:rt_thread/include/rtservice.h ****  * @brief remove node from list.
+  84:rt_thread/include/rtservice.h ****  * @param n the node to remove from the list.
+  85:rt_thread/include/rtservice.h ****  */
+  86:rt_thread/include/rtservice.h **** rt_inline void rt_list_remove(rt_list_t *n)
+  87:rt_thread/include/rtservice.h **** {
+  88:rt_thread/include/rtservice.h ****     n->next->prev = n->prev;
+ 319              		.loc 2 88 0
+ 320 004a 6269     		ldr	r2, [r4, #20]
+ 321 004c A169     		ldr	r1, [r4, #24]
+ 322 004e 5160     		str	r1, [r2, #4]
+  89:rt_thread/include/rtservice.h ****     n->prev->next = n->next;
+ 323              		.loc 2 89 0
+ 324 0050 A269     		ldr	r2, [r4, #24]
+ 325 0052 6169     		ldr	r1, [r4, #20]
+ 326 0054 1160     		str	r1, [r2]
+  90:rt_thread/include/rtservice.h **** 
+  91:rt_thread/include/rtservice.h ****     n->next = n->prev = n;
+ 327              		.loc 2 91 0
+ 328 0056 A361     		str	r3, [r4, #24]
+ 329 0058 6361     		str	r3, [r4, #20]
+ 330              	.LVL33:
+ 331              	.LBE23:
+ 332              	.LBE22:
+ 804:rt_thread/src/thread.c **** 
+ 805:rt_thread/src/thread.c ****     /* insert to schedule ready list */
+ 806:rt_thread/src/thread.c ****     rt_schedule_insert_thread(thread);
+ 333              		.loc 1 806 0
+ 334 005a 2046     		mov	r0, r4
+ 335 005c FFF7FEFF 		bl	rt_schedule_insert_thread
+ 336              	.LVL34:
+ 807:rt_thread/src/thread.c **** 
+ 808:rt_thread/src/thread.c ****     /* do schedule */
+ 809:rt_thread/src/thread.c ****     rt_schedule();
+ 337              		.loc 1 809 0
+ 338 0060 FFF7FEFF 		bl	rt_schedule
+ 339              	.LVL35:
+ 340 0064 10BD     		pop	{r4, pc}
+ 341              	.LVL36:
+ 342              	.L19:
+ 343 0066 00BF     		.align	2
+ 344              	.L18:
+ 345 0068 00000000 		.word	.LANCHOR2
+ 346 006c 24000000 		.word	.LC1
+ 347 0070 38000000 		.word	.LC2
+ 348 0074 74000000 		.word	.LC3
+ 349              		.cfi_endproc
+ 350              	.LFE34:
+ 352              		.section	.text.rt_thread_suspend_sethook,"ax",%progbits
+ 353              		.align	2
+ 354              		.global	rt_thread_suspend_sethook
+ 355              		.thumb
+ 356              		.thumb_func
+ 358              	rt_thread_suspend_sethook:
+ARM GAS  /tmp/ccDetQHQ.s 			page 23
+
+
+ 359              	.LFB15:
+  51:rt_thread/src/thread.c ****     rt_thread_suspend_hook = hook;
+ 360              		.loc 1 51 0
+ 361              		.cfi_startproc
+ 362              		@ args = 0, pretend = 0, frame = 0
+ 363              		@ frame_needed = 0, uses_anonymous_args = 0
+ 364              		@ link register save eliminated.
+ 365              	.LVL37:
+  52:rt_thread/src/thread.c **** }
+ 366              		.loc 1 52 0
+ 367 0000 014B     		ldr	r3, .L21
+ 368 0002 1860     		str	r0, [r3]
+ 369 0004 7047     		bx	lr
+ 370              	.L22:
+ 371 0006 00BF     		.align	2
+ 372              	.L21:
+ 373 0008 00000000 		.word	.LANCHOR3
+ 374              		.cfi_endproc
+ 375              	.LFE15:
+ 377              		.section	.text.rt_thread_resume_sethook,"ax",%progbits
+ 378              		.align	2
+ 379              		.global	rt_thread_resume_sethook
+ 380              		.thumb
+ 381              		.thumb_func
+ 383              	rt_thread_resume_sethook:
+ 384              	.LFB16:
+  64:rt_thread/src/thread.c ****     rt_thread_resume_hook = hook;
+ 385              		.loc 1 64 0
+ 386              		.cfi_startproc
+ 387              		@ args = 0, pretend = 0, frame = 0
+ 388              		@ frame_needed = 0, uses_anonymous_args = 0
+ 389              		@ link register save eliminated.
+ 390              	.LVL38:
+  65:rt_thread/src/thread.c **** }
+ 391              		.loc 1 65 0
+ 392 0000 014B     		ldr	r3, .L24
+ 393 0002 1860     		str	r0, [r3]
+ 394 0004 7047     		bx	lr
+ 395              	.L25:
+ 396 0006 00BF     		.align	2
+ 397              	.L24:
+ 398 0008 00000000 		.word	.LANCHOR4
+ 399              		.cfi_endproc
+ 400              	.LFE16:
+ 402              		.section	.text.rt_thread_inited_sethook,"ax",%progbits
+ 403              		.align	2
+ 404              		.global	rt_thread_inited_sethook
+ 405              		.thumb
+ 406              		.thumb_func
+ 408              	rt_thread_inited_sethook:
+ 409              	.LFB17:
+  75:rt_thread/src/thread.c ****     rt_thread_inited_hook = hook;
+ 410              		.loc 1 75 0
+ 411              		.cfi_startproc
+ 412              		@ args = 0, pretend = 0, frame = 0
+ 413              		@ frame_needed = 0, uses_anonymous_args = 0
+ 414              		@ link register save eliminated.
+ARM GAS  /tmp/ccDetQHQ.s 			page 24
+
+
+ 415              	.LVL39:
+  76:rt_thread/src/thread.c **** }
+ 416              		.loc 1 76 0
+ 417 0000 014B     		ldr	r3, .L27
+ 418 0002 1860     		str	r0, [r3]
+ 419 0004 7047     		bx	lr
+ 420              	.L28:
+ 421 0006 00BF     		.align	2
+ 422              	.L27:
+ 423 0008 00000000 		.word	.LANCHOR1
+ 424              		.cfi_endproc
+ 425              	.LFE17:
+ 427              		.section	.text.rt_thread_init,"ax",%progbits
+ 428              		.align	2
+ 429              		.global	rt_thread_init
+ 430              		.thumb
+ 431              		.thumb_func
+ 433              	rt_thread_init:
+ 434              	.LFB20:
+ 228:rt_thread/src/thread.c ****     /* thread check */
+ 435              		.loc 1 228 0
+ 436              		.cfi_startproc
+ 437              		@ args = 16, pretend = 0, frame = 0
+ 438              		@ frame_needed = 0, uses_anonymous_args = 0
+ 439              	.LVL40:
+ 440 0000 2DE9F041 		push	{r4, r5, r6, r7, r8, lr}
+ 441              	.LCFI5:
+ 442              		.cfi_def_cfa_offset 24
+ 443              		.cfi_offset 4, -24
+ 444              		.cfi_offset 5, -20
+ 445              		.cfi_offset 6, -16
+ 446              		.cfi_offset 7, -12
+ 447              		.cfi_offset 8, -8
+ 448              		.cfi_offset 14, -4
+ 449 0004 84B0     		sub	sp, sp, #16
+ 450              	.LCFI6:
+ 451              		.cfi_def_cfa_offset 40
+ 452 0006 0D46     		mov	r5, r1
+ 453 0008 1746     		mov	r7, r2
+ 454 000a 9846     		mov	r8, r3
+ 455 000c 0A9E     		ldr	r6, [sp, #40]
+ 230:rt_thread/src/thread.c ****     RT_ASSERT(stack_start != RT_NULL);
+ 456              		.loc 1 230 0
+ 457 000e 0446     		mov	r4, r0
+ 458 0010 20B9     		cbnz	r0, .L30
+ 230:rt_thread/src/thread.c ****     RT_ASSERT(stack_start != RT_NULL);
+ 459              		.loc 1 230 0 is_stmt 0 discriminator 1
+ 460 0012 E622     		movs	r2, #230
+ 461              	.LVL41:
+ 462 0014 0F49     		ldr	r1, .L33
+ 463              	.LVL42:
+ 464 0016 1048     		ldr	r0, .L33+4
+ 465              	.LVL43:
+ 466 0018 FFF7FEFF 		bl	rt_assert_handler
+ 467              	.LVL44:
+ 468              	.L30:
+ 231:rt_thread/src/thread.c **** 
+ARM GAS  /tmp/ccDetQHQ.s 			page 25
+
+
+ 469              		.loc 1 231 0 is_stmt 1
+ 470 001c 26B9     		cbnz	r6, .L31
+ 231:rt_thread/src/thread.c **** 
+ 471              		.loc 1 231 0 is_stmt 0 discriminator 1
+ 472 001e E722     		movs	r2, #231
+ 473 0020 0C49     		ldr	r1, .L33
+ 474 0022 0E48     		ldr	r0, .L33+8
+ 475 0024 FFF7FEFF 		bl	rt_assert_handler
+ 476              	.LVL45:
+ 477              	.L31:
+ 234:rt_thread/src/thread.c **** 
+ 478              		.loc 1 234 0 is_stmt 1
+ 479 0028 2A46     		mov	r2, r5
+ 480 002a 0121     		movs	r1, #1
+ 481 002c 2046     		mov	r0, r4
+ 482 002e FFF7FEFF 		bl	rt_object_init
+ 483              	.LVL46:
+ 236:rt_thread/src/thread.c ****                            name,
+ 484              		.loc 1 236 0
+ 485 0032 0D9B     		ldr	r3, [sp, #52]
+ 486 0034 0393     		str	r3, [sp, #12]
+ 487 0036 9DF83030 		ldrb	r3, [sp, #48]	@ zero_extendqisi2
+ 488 003a 0293     		str	r3, [sp, #8]
+ 489 003c 0B9B     		ldr	r3, [sp, #44]
+ 490 003e 0193     		str	r3, [sp, #4]
+ 491 0040 0096     		str	r6, [sp]
+ 492 0042 4346     		mov	r3, r8
+ 493 0044 3A46     		mov	r2, r7
+ 494 0046 2946     		mov	r1, r5
+ 495 0048 2046     		mov	r0, r4
+ 496 004a FFF7FEFF 		bl	_rt_thread_init
+ 497              	.LVL47:
+ 244:rt_thread/src/thread.c **** RTM_EXPORT(rt_thread_init);
+ 498              		.loc 1 244 0
+ 499 004e 04B0     		add	sp, sp, #16
+ 500              	.LCFI7:
+ 501              		.cfi_def_cfa_offset 24
+ 502              		@ sp needed
+ 503 0050 BDE8F081 		pop	{r4, r5, r6, r7, r8, pc}
+ 504              	.LVL48:
+ 505              	.L34:
+ 506              		.align	2
+ 507              	.L33:
+ 508 0054 00000000 		.word	.LANCHOR5
+ 509 0058 24000000 		.word	.LC1
+ 510 005c B8000000 		.word	.LC4
+ 511              		.cfi_endproc
+ 512              	.LFE20:
+ 514              		.section	.text.rt_thread_self,"ax",%progbits
+ 515              		.align	2
+ 516              		.global	rt_thread_self
+ 517              		.thumb
+ 518              		.thumb_func
+ 520              	rt_thread_self:
+ 521              	.LFB21:
+ 253:rt_thread/src/thread.c ****     return rt_current_thread;
+ 522              		.loc 1 253 0
+ARM GAS  /tmp/ccDetQHQ.s 			page 26
+
+
+ 523              		.cfi_startproc
+ 524              		@ args = 0, pretend = 0, frame = 0
+ 525              		@ frame_needed = 0, uses_anonymous_args = 0
+ 526              		@ link register save eliminated.
+ 255:rt_thread/src/thread.c **** RTM_EXPORT(rt_thread_self);
+ 527              		.loc 1 255 0
+ 528 0000 014B     		ldr	r3, .L36
+ 529 0002 1868     		ldr	r0, [r3]
+ 530 0004 7047     		bx	lr
+ 531              	.L37:
+ 532 0006 00BF     		.align	2
+ 533              	.L36:
+ 534 0008 00000000 		.word	rt_current_thread
+ 535              		.cfi_endproc
+ 536              	.LFE21:
+ 538              		.section	.text.rt_thread_detach,"ax",%progbits
+ 539              		.align	2
+ 540              		.global	rt_thread_detach
+ 541              		.thumb
+ 542              		.thumb_func
+ 544              	rt_thread_detach:
+ 545              	.LFB23:
+ 309:rt_thread/src/thread.c ****     rt_base_t lock;
+ 546              		.loc 1 309 0
+ 547              		.cfi_startproc
+ 548              		@ args = 0, pretend = 0, frame = 0
+ 549              		@ frame_needed = 0, uses_anonymous_args = 0
+ 550              	.LVL49:
+ 551 0000 10B5     		push	{r4, lr}
+ 552              	.LCFI8:
+ 553              		.cfi_def_cfa_offset 8
+ 554              		.cfi_offset 4, -8
+ 555              		.cfi_offset 14, -4
+ 313:rt_thread/src/thread.c ****     RT_ASSERT(rt_object_get_type((rt_object_t)thread) == RT_Object_Class_Thread);
+ 556              		.loc 1 313 0
+ 557 0002 0446     		mov	r4, r0
+ 558 0004 28B9     		cbnz	r0, .L39
+ 313:rt_thread/src/thread.c ****     RT_ASSERT(rt_object_get_type((rt_object_t)thread) == RT_Object_Class_Thread);
+ 559              		.loc 1 313 0 is_stmt 0 discriminator 1
+ 560 0006 40F23912 		movw	r2, #313
+ 561 000a 2149     		ldr	r1, .L46
+ 562 000c 2148     		ldr	r0, .L46+4
+ 563              	.LVL50:
+ 564 000e FFF7FEFF 		bl	rt_assert_handler
+ 565              	.LVL51:
+ 566              	.L39:
+ 314:rt_thread/src/thread.c ****     RT_ASSERT(rt_object_is_systemobject((rt_object_t)thread));
+ 567              		.loc 1 314 0 is_stmt 1
+ 568 0012 2046     		mov	r0, r4
+ 569 0014 FFF7FEFF 		bl	rt_object_get_type
+ 570              	.LVL52:
+ 571 0018 0128     		cmp	r0, #1
+ 572 001a 05D0     		beq	.L40
+ 314:rt_thread/src/thread.c ****     RT_ASSERT(rt_object_is_systemobject((rt_object_t)thread));
+ 573              		.loc 1 314 0 is_stmt 0 discriminator 1
+ 574 001c 4FF49D72 		mov	r2, #314
+ 575 0020 1B49     		ldr	r1, .L46
+ARM GAS  /tmp/ccDetQHQ.s 			page 27
+
+
+ 576 0022 1D48     		ldr	r0, .L46+8
+ 577 0024 FFF7FEFF 		bl	rt_assert_handler
+ 578              	.LVL53:
+ 579              	.L40:
+ 315:rt_thread/src/thread.c **** 
+ 580              		.loc 1 315 0 is_stmt 1
+ 581 0028 2046     		mov	r0, r4
+ 582 002a FFF7FEFF 		bl	rt_object_is_systemobject
+ 583              	.LVL54:
+ 584 002e 28B9     		cbnz	r0, .L41
+ 315:rt_thread/src/thread.c **** 
+ 585              		.loc 1 315 0 is_stmt 0 discriminator 1
+ 586 0030 40F23B12 		movw	r2, #315
+ 587 0034 1649     		ldr	r1, .L46
+ 588 0036 1948     		ldr	r0, .L46+12
+ 589 0038 FFF7FEFF 		bl	rt_assert_handler
+ 590              	.LVL55:
+ 591              	.L41:
+ 317:rt_thread/src/thread.c ****     {
+ 592              		.loc 1 317 0 is_stmt 1
+ 593 003c 94F83430 		ldrb	r3, [r4, #52]	@ zero_extendqisi2
+ 594 0040 13F00F0F 		tst	r3, #15
+ 595 0044 02D0     		beq	.L42
+ 320:rt_thread/src/thread.c ****     }
+ 596              		.loc 1 320 0
+ 597 0046 2046     		mov	r0, r4
+ 598 0048 FFF7FEFF 		bl	rt_schedule_remove_thread
+ 599              	.LVL56:
+ 600              	.L42:
+ 324:rt_thread/src/thread.c **** 
+ 601              		.loc 1 324 0
+ 602 004c 04F16000 		add	r0, r4, #96
+ 603 0050 FFF7FEFF 		bl	rt_timer_detach
+ 604              	.LVL57:
+ 327:rt_thread/src/thread.c **** 
+ 605              		.loc 1 327 0
+ 606 0054 0423     		movs	r3, #4
+ 607 0056 84F83430 		strb	r3, [r4, #52]
+ 329:rt_thread/src/thread.c ****         thread->cleanup == RT_NULL)
+ 608              		.loc 1 329 0
+ 609 005a 2046     		mov	r0, r4
+ 610 005c FFF7FEFF 		bl	rt_object_is_systemobject
+ 611              	.LVL58:
+ 612 0060 0128     		cmp	r0, #1
+ 613 0062 06D1     		bne	.L43
+ 330:rt_thread/src/thread.c ****     {
+ 614              		.loc 1 330 0 discriminator 1
+ 615 0064 D4F88C30 		ldr	r3, [r4, #140]
+ 329:rt_thread/src/thread.c ****         thread->cleanup == RT_NULL)
+ 616              		.loc 1 329 0 discriminator 1
+ 617 0068 1BB9     		cbnz	r3, .L43
+ 332:rt_thread/src/thread.c ****     }
+ 618              		.loc 1 332 0
+ 619 006a 2046     		mov	r0, r4
+ 620 006c FFF7FEFF 		bl	rt_object_detach
+ 621              	.LVL59:
+ 622 0070 0BE0     		b	.L44
+ARM GAS  /tmp/ccDetQHQ.s 			page 28
+
+
+ 623              	.L43:
+ 337:rt_thread/src/thread.c ****         /* insert to defunct thread list */
+ 624              		.loc 1 337 0
+ 625 0072 FFF7FEFF 		bl	rt_hw_interrupt_disable
+ 626              	.LVL60:
+ 339:rt_thread/src/thread.c ****         /* enable interrupt */
+ 627              		.loc 1 339 0
+ 628 0076 04F11402 		add	r2, r4, #20
+ 629              	.LVL61:
+ 630              	.LBB24:
+ 631              	.LBB25:
+  60:rt_thread/include/rtservice.h ****     n->next = l->next;
+ 632              		.loc 2 60 0
+ 633 007a 094B     		ldr	r3, .L46+16
+ 634 007c 1968     		ldr	r1, [r3]
+ 635 007e 4A60     		str	r2, [r1, #4]
+  61:rt_thread/include/rtservice.h **** 
+ 636              		.loc 2 61 0
+ 637 0080 6161     		str	r1, [r4, #20]
+  63:rt_thread/include/rtservice.h ****     n->prev = l;
+ 638              		.loc 2 63 0
+ 639 0082 1A60     		str	r2, [r3]
+  64:rt_thread/include/rtservice.h **** }
+ 640              		.loc 2 64 0
+ 641 0084 A361     		str	r3, [r4, #24]
+ 642              	.LVL62:
+ 643              	.LBE25:
+ 644              	.LBE24:
+ 341:rt_thread/src/thread.c ****     }
+ 645              		.loc 1 341 0
+ 646 0086 FFF7FEFF 		bl	rt_hw_interrupt_enable
+ 647              	.LVL63:
+ 648              	.L44:
+ 345:rt_thread/src/thread.c **** RTM_EXPORT(rt_thread_detach);
+ 649              		.loc 1 345 0
+ 650 008a 0020     		movs	r0, #0
+ 651 008c 10BD     		pop	{r4, pc}
+ 652              	.LVL64:
+ 653              	.L47:
+ 654 008e 00BF     		.align	2
+ 655              	.L46:
+ 656 0090 00000000 		.word	.LANCHOR6
+ 657 0094 24000000 		.word	.LC1
+ 658 0098 74000000 		.word	.LC3
+ 659 009c D0000000 		.word	.LC5
+ 660 00a0 00000000 		.word	rt_thread_defunct
+ 661              		.cfi_endproc
+ 662              	.LFE23:
+ 664              		.section	.text.rt_thread_create,"ax",%progbits
+ 665              		.align	2
+ 666              		.global	rt_thread_create
+ 667              		.thumb
+ 668              		.thumb_func
+ 670              	rt_thread_create:
+ 671              	.LFB24:
+ 368:rt_thread/src/thread.c ****     struct rt_thread *thread;
+ 672              		.loc 1 368 0
+ARM GAS  /tmp/ccDetQHQ.s 			page 29
+
+
+ 673              		.cfi_startproc
+ 674              		@ args = 8, pretend = 0, frame = 0
+ 675              		@ frame_needed = 0, uses_anonymous_args = 0
+ 676              	.LVL65:
+ 677 0000 2DE9F041 		push	{r4, r5, r6, r7, r8, lr}
+ 678              	.LCFI9:
+ 679              		.cfi_def_cfa_offset 24
+ 680              		.cfi_offset 4, -24
+ 681              		.cfi_offset 5, -20
+ 682              		.cfi_offset 6, -16
+ 683              		.cfi_offset 7, -12
+ 684              		.cfi_offset 8, -8
+ 685              		.cfi_offset 14, -4
+ 686 0004 84B0     		sub	sp, sp, #16
+ 687              	.LCFI10:
+ 688              		.cfi_def_cfa_offset 40
+ 689 0006 0546     		mov	r5, r0
+ 690 0008 0F46     		mov	r7, r1
+ 691 000a 9046     		mov	r8, r2
+ 692 000c 1E46     		mov	r6, r3
+ 372:rt_thread/src/thread.c ****                                                     name);
+ 693              		.loc 1 372 0
+ 694 000e 0146     		mov	r1, r0
+ 695              	.LVL66:
+ 696 0010 0120     		movs	r0, #1
+ 697              	.LVL67:
+ 698 0012 FFF7FEFF 		bl	rt_object_allocate
+ 699              	.LVL68:
+ 374:rt_thread/src/thread.c ****         return RT_NULL;
+ 700              		.loc 1 374 0
+ 701 0016 C0B1     		cbz	r0, .L51
+ 702 0018 0446     		mov	r4, r0
+ 377:rt_thread/src/thread.c ****     if (stack_start == RT_NULL)
+ 703              		.loc 1 377 0
+ 704 001a 3046     		mov	r0, r6
+ 705              	.LVL69:
+ 706 001c FFF7FEFF 		bl	rt_malloc
+ 707              	.LVL70:
+ 378:rt_thread/src/thread.c ****     {
+ 708              		.loc 1 378 0
+ 709 0020 20B9     		cbnz	r0, .L50
+ 381:rt_thread/src/thread.c **** 
+ 710              		.loc 1 381 0
+ 711 0022 2046     		mov	r0, r4
+ 712              	.LVL71:
+ 713 0024 FFF7FEFF 		bl	rt_object_delete
+ 714              	.LVL72:
+ 383:rt_thread/src/thread.c ****     }
+ 715              		.loc 1 383 0
+ 716 0028 0020     		movs	r0, #0
+ 717 002a 0FE0     		b	.L49
+ 718              	.LVL73:
+ 719              	.L50:
+ 386:rt_thread/src/thread.c ****                     name,
+ 720              		.loc 1 386 0
+ 721 002c 0B9A     		ldr	r2, [sp, #44]
+ 722 002e 0392     		str	r2, [sp, #12]
+ARM GAS  /tmp/ccDetQHQ.s 			page 30
+
+
+ 723 0030 9DF82820 		ldrb	r2, [sp, #40]	@ zero_extendqisi2
+ 724 0034 0292     		str	r2, [sp, #8]
+ 725 0036 0196     		str	r6, [sp, #4]
+ 726 0038 0090     		str	r0, [sp]
+ 727 003a 4346     		mov	r3, r8
+ 728 003c 3A46     		mov	r2, r7
+ 729 003e 2946     		mov	r1, r5
+ 730 0040 2046     		mov	r0, r4
+ 731              	.LVL74:
+ 732 0042 FFF7FEFF 		bl	_rt_thread_init
+ 733              	.LVL75:
+ 395:rt_thread/src/thread.c **** }
+ 734              		.loc 1 395 0
+ 735 0046 2046     		mov	r0, r4
+ 736 0048 00E0     		b	.L49
+ 737              	.LVL76:
+ 738              	.L51:
+ 375:rt_thread/src/thread.c **** 
+ 739              		.loc 1 375 0
+ 740 004a 0020     		movs	r0, #0
+ 741              	.LVL77:
+ 742              	.L49:
+ 396:rt_thread/src/thread.c **** RTM_EXPORT(rt_thread_create);
+ 743              		.loc 1 396 0
+ 744 004c 04B0     		add	sp, sp, #16
+ 745              	.LCFI11:
+ 746              		.cfi_def_cfa_offset 24
+ 747              		@ sp needed
+ 748 004e BDE8F081 		pop	{r4, r5, r6, r7, r8, pc}
+ 749              		.cfi_endproc
+ 750              	.LFE24:
+ 752 0052 00BF     		.section	.text.rt_thread_delete,"ax",%progbits
+ 753              		.align	2
+ 754              		.global	rt_thread_delete
+ 755              		.thumb
+ 756              		.thumb_func
+ 758              	rt_thread_delete:
+ 759              	.LFB25:
+ 408:rt_thread/src/thread.c ****     rt_base_t lock;
+ 760              		.loc 1 408 0
+ 761              		.cfi_startproc
+ 762              		@ args = 0, pretend = 0, frame = 0
+ 763              		@ frame_needed = 0, uses_anonymous_args = 0
+ 764              	.LVL78:
+ 765 0000 10B5     		push	{r4, lr}
+ 766              	.LCFI12:
+ 767              		.cfi_def_cfa_offset 8
+ 768              		.cfi_offset 4, -8
+ 769              		.cfi_offset 14, -4
+ 412:rt_thread/src/thread.c ****     RT_ASSERT(rt_object_get_type((rt_object_t)thread) == RT_Object_Class_Thread);
+ 770              		.loc 1 412 0
+ 771 0002 0446     		mov	r4, r0
+ 772 0004 28B9     		cbnz	r0, .L54
+ 412:rt_thread/src/thread.c ****     RT_ASSERT(rt_object_get_type((rt_object_t)thread) == RT_Object_Class_Thread);
+ 773              		.loc 1 412 0 is_stmt 0 discriminator 1
+ 774 0006 4FF4CE72 		mov	r2, #412
+ 775 000a 1B49     		ldr	r1, .L59
+ARM GAS  /tmp/ccDetQHQ.s 			page 31
+
+
+ 776 000c 1B48     		ldr	r0, .L59+4
+ 777              	.LVL79:
+ 778 000e FFF7FEFF 		bl	rt_assert_handler
+ 779              	.LVL80:
+ 780              	.L54:
+ 413:rt_thread/src/thread.c ****     RT_ASSERT(rt_object_is_systemobject((rt_object_t)thread) == RT_FALSE);
+ 781              		.loc 1 413 0 is_stmt 1
+ 782 0012 2046     		mov	r0, r4
+ 783 0014 FFF7FEFF 		bl	rt_object_get_type
+ 784              	.LVL81:
+ 785 0018 0128     		cmp	r0, #1
+ 786 001a 05D0     		beq	.L55
+ 413:rt_thread/src/thread.c ****     RT_ASSERT(rt_object_is_systemobject((rt_object_t)thread) == RT_FALSE);
+ 787              		.loc 1 413 0 is_stmt 0 discriminator 1
+ 788 001c 40F29D12 		movw	r2, #413
+ 789 0020 1549     		ldr	r1, .L59
+ 790 0022 1748     		ldr	r0, .L59+8
+ 791 0024 FFF7FEFF 		bl	rt_assert_handler
+ 792              	.LVL82:
+ 793              	.L55:
+ 414:rt_thread/src/thread.c **** 
+ 794              		.loc 1 414 0 is_stmt 1
+ 795 0028 2046     		mov	r0, r4
+ 796 002a FFF7FEFF 		bl	rt_object_is_systemobject
+ 797              	.LVL83:
+ 798 002e 28B1     		cbz	r0, .L56
+ 414:rt_thread/src/thread.c **** 
+ 799              		.loc 1 414 0 is_stmt 0 discriminator 1
+ 800 0030 4FF4CF72 		mov	r2, #414
+ 801 0034 1049     		ldr	r1, .L59
+ 802 0036 1348     		ldr	r0, .L59+12
+ 803 0038 FFF7FEFF 		bl	rt_assert_handler
+ 804              	.LVL84:
+ 805              	.L56:
+ 416:rt_thread/src/thread.c ****     {
+ 806              		.loc 1 416 0 is_stmt 1
+ 807 003c 94F83430 		ldrb	r3, [r4, #52]	@ zero_extendqisi2
+ 808 0040 13F00F0F 		tst	r3, #15
+ 809 0044 02D0     		beq	.L57
+ 419:rt_thread/src/thread.c ****     }
+ 810              		.loc 1 419 0
+ 811 0046 2046     		mov	r0, r4
+ 812 0048 FFF7FEFF 		bl	rt_schedule_remove_thread
+ 813              	.LVL85:
+ 814              	.L57:
+ 423:rt_thread/src/thread.c **** 
+ 815              		.loc 1 423 0
+ 816 004c 04F16000 		add	r0, r4, #96
+ 817 0050 FFF7FEFF 		bl	rt_timer_detach
+ 818              	.LVL86:
+ 426:rt_thread/src/thread.c **** 
+ 819              		.loc 1 426 0
+ 820 0054 FFF7FEFF 		bl	rt_hw_interrupt_disable
+ 821              	.LVL87:
+ 429:rt_thread/src/thread.c **** 
+ 822              		.loc 1 429 0
+ 823 0058 0423     		movs	r3, #4
+ARM GAS  /tmp/ccDetQHQ.s 			page 32
+
+
+ 824 005a 84F83430 		strb	r3, [r4, #52]
+ 432:rt_thread/src/thread.c **** 
+ 825              		.loc 1 432 0
+ 826 005e 04F11402 		add	r2, r4, #20
+ 827              	.LVL88:
+ 828              	.LBB26:
+ 829              	.LBB27:
+  60:rt_thread/include/rtservice.h ****     n->next = l->next;
+ 830              		.loc 2 60 0
+ 831 0062 094B     		ldr	r3, .L59+16
+ 832 0064 1968     		ldr	r1, [r3]
+ 833 0066 4A60     		str	r2, [r1, #4]
+  61:rt_thread/include/rtservice.h **** 
+ 834              		.loc 2 61 0
+ 835 0068 6161     		str	r1, [r4, #20]
+  63:rt_thread/include/rtservice.h ****     n->prev = l;
+ 836              		.loc 2 63 0
+ 837 006a 1A60     		str	r2, [r3]
+  64:rt_thread/include/rtservice.h **** }
+ 838              		.loc 2 64 0
+ 839 006c A361     		str	r3, [r4, #24]
+ 840              	.LVL89:
+ 841              	.LBE27:
+ 842              	.LBE26:
+ 435:rt_thread/src/thread.c **** 
+ 843              		.loc 1 435 0
+ 844 006e FFF7FEFF 		bl	rt_hw_interrupt_enable
+ 845              	.LVL90:
+ 438:rt_thread/src/thread.c **** RTM_EXPORT(rt_thread_delete);
+ 846              		.loc 1 438 0
+ 847 0072 0020     		movs	r0, #0
+ 848 0074 10BD     		pop	{r4, pc}
+ 849              	.LVL91:
+ 850              	.L60:
+ 851 0076 00BF     		.align	2
+ 852              	.L59:
+ 853 0078 00000000 		.word	.LANCHOR7
+ 854 007c 24000000 		.word	.LC1
+ 855 0080 74000000 		.word	.LC3
+ 856 0084 00010000 		.word	.LC6
+ 857 0088 00000000 		.word	rt_thread_defunct
+ 858              		.cfi_endproc
+ 859              	.LFE25:
+ 861              		.section	.text.rt_thread_yield,"ax",%progbits
+ 862              		.align	2
+ 863              		.global	rt_thread_yield
+ 864              		.thumb
+ 865              		.thumb_func
+ 867              	rt_thread_yield:
+ 868              	.LFB26:
+ 450:rt_thread/src/thread.c ****     register rt_base_t level;
+ 869              		.loc 1 450 0
+ 870              		.cfi_startproc
+ 871              		@ args = 0, pretend = 0, frame = 0
+ 872              		@ frame_needed = 0, uses_anonymous_args = 0
+ 873 0000 10B5     		push	{r4, lr}
+ 874              	.LCFI13:
+ARM GAS  /tmp/ccDetQHQ.s 			page 33
+
+
+ 875              		.cfi_def_cfa_offset 8
+ 876              		.cfi_offset 4, -8
+ 877              		.cfi_offset 14, -4
+ 455:rt_thread/src/thread.c **** 
+ 878              		.loc 1 455 0
+ 879 0002 FFF7FEFF 		bl	rt_hw_interrupt_disable
+ 880              	.LVL92:
+ 458:rt_thread/src/thread.c **** 
+ 881              		.loc 1 458 0
+ 882 0006 144B     		ldr	r3, .L65
+ 883 0008 1B68     		ldr	r3, [r3]
+ 884              	.LVL93:
+ 461:rt_thread/src/thread.c ****         thread->tlist.next != thread->tlist.prev)
+ 885              		.loc 1 461 0
+ 886 000a 93F83420 		ldrb	r2, [r3, #52]	@ zero_extendqisi2
+ 887 000e 02F00F02 		and	r2, r2, #15
+ 888 0012 012A     		cmp	r2, #1
+ 889 0014 1BD1     		bne	.L62
+ 462:rt_thread/src/thread.c ****     {
+ 890              		.loc 1 462 0 discriminator 1
+ 891 0016 5A69     		ldr	r2, [r3, #20]
+ 892 0018 9C69     		ldr	r4, [r3, #24]
+ 461:rt_thread/src/thread.c ****         thread->tlist.next != thread->tlist.prev)
+ 893              		.loc 1 461 0 discriminator 1
+ 894 001a A242     		cmp	r2, r4
+ 895 001c 17D0     		beq	.L62
+ 465:rt_thread/src/thread.c **** 
+ 896              		.loc 1 465 0
+ 897 001e 03F11401 		add	r1, r3, #20
+ 898              	.LVL94:
+ 899              	.LBB28:
+ 900              	.LBB29:
+  88:rt_thread/include/rtservice.h ****     n->prev->next = n->next;
+ 901              		.loc 2 88 0
+ 902 0022 5460     		str	r4, [r2, #4]
+  89:rt_thread/include/rtservice.h **** 
+ 903              		.loc 2 89 0
+ 904 0024 9A69     		ldr	r2, [r3, #24]
+ 905 0026 5C69     		ldr	r4, [r3, #20]
+ 906 0028 1460     		str	r4, [r2]
+ 907              		.loc 2 91 0
+ 908 002a 9961     		str	r1, [r3, #24]
+ 909 002c 5961     		str	r1, [r3, #20]
+ 910              	.LVL95:
+ 911              	.LBE29:
+ 912              	.LBE28:
+ 468:rt_thread/src/thread.c ****                               &(thread->tlist));
+ 913              		.loc 1 468 0
+ 914 002e 93F83540 		ldrb	r4, [r3, #53]	@ zero_extendqisi2
+ 915 0032 0A4A     		ldr	r2, .L65+4
+ 916 0034 02EBC402 		add	r2, r2, r4, lsl #3
+ 917              	.LVL96:
+ 918              	.LBB30:
+ 919              	.LBB31:
+  75:rt_thread/include/rtservice.h ****     n->prev = l->prev;
+ 920              		.loc 2 75 0
+ 921 0038 5468     		ldr	r4, [r2, #4]
+ARM GAS  /tmp/ccDetQHQ.s 			page 34
+
+
+ 922 003a 2160     		str	r1, [r4]
+  76:rt_thread/include/rtservice.h **** 
+ 923              		.loc 2 76 0
+ 924 003c 5468     		ldr	r4, [r2, #4]
+ 925 003e 9C61     		str	r4, [r3, #24]
+  78:rt_thread/include/rtservice.h ****     n->next = l;
+ 926              		.loc 2 78 0
+ 927 0040 5160     		str	r1, [r2, #4]
+  79:rt_thread/include/rtservice.h **** }
+ 928              		.loc 2 79 0
+ 929 0042 5A61     		str	r2, [r3, #20]
+ 930              	.LVL97:
+ 931              	.LBE31:
+ 932              	.LBE30:
+ 472:rt_thread/src/thread.c **** 
+ 933              		.loc 1 472 0
+ 934 0044 FFF7FEFF 		bl	rt_hw_interrupt_enable
+ 935              	.LVL98:
+ 474:rt_thread/src/thread.c **** 
+ 936              		.loc 1 474 0
+ 937 0048 FFF7FEFF 		bl	rt_schedule
+ 938              	.LVL99:
+ 476:rt_thread/src/thread.c ****     }
+ 939              		.loc 1 476 0
+ 940 004c 01E0     		b	.L63
+ 941              	.LVL100:
+ 942              	.L62:
+ 480:rt_thread/src/thread.c **** 
+ 943              		.loc 1 480 0
+ 944 004e FFF7FEFF 		bl	rt_hw_interrupt_enable
+ 945              	.LVL101:
+ 946              	.L63:
+ 483:rt_thread/src/thread.c **** RTM_EXPORT(rt_thread_yield);
+ 947              		.loc 1 483 0
+ 948 0052 0020     		movs	r0, #0
+ 949 0054 10BD     		pop	{r4, pc}
+ 950              	.L66:
+ 951 0056 00BF     		.align	2
+ 952              	.L65:
+ 953 0058 00000000 		.word	rt_current_thread
+ 954 005c 00000000 		.word	rt_thread_priority_table
+ 955              		.cfi_endproc
+ 956              	.LFE26:
+ 958              		.section	.text.rt_thread_suspend,"ax",%progbits
+ 959              		.align	2
+ 960              		.global	rt_thread_suspend
+ 961              		.thumb
+ 962              		.thumb_func
+ 964              	rt_thread_suspend:
+ 965              	.LFB32:
+ 703:rt_thread/src/thread.c ****     register rt_base_t temp;
+ 966              		.loc 1 703 0
+ 967              		.cfi_startproc
+ 968              		@ args = 0, pretend = 0, frame = 0
+ 969              		@ frame_needed = 0, uses_anonymous_args = 0
+ 970              	.LVL102:
+ 971 0000 38B5     		push	{r3, r4, r5, lr}
+ARM GAS  /tmp/ccDetQHQ.s 			page 35
+
+
+ 972              	.LCFI14:
+ 973              		.cfi_def_cfa_offset 16
+ 974              		.cfi_offset 3, -16
+ 975              		.cfi_offset 4, -12
+ 976              		.cfi_offset 5, -8
+ 977              		.cfi_offset 14, -4
+ 707:rt_thread/src/thread.c ****     RT_ASSERT(rt_object_get_type((rt_object_t)thread) == RT_Object_Class_Thread);
+ 978              		.loc 1 707 0
+ 979 0002 0446     		mov	r4, r0
+ 980 0004 28B9     		cbnz	r0, .L68
+ 707:rt_thread/src/thread.c ****     RT_ASSERT(rt_object_get_type((rt_object_t)thread) == RT_Object_Class_Thread);
+ 981              		.loc 1 707 0 is_stmt 0 discriminator 1
+ 982 0006 40F2C322 		movw	r2, #707
+ 983 000a 1B49     		ldr	r1, .L74
+ 984 000c 1B48     		ldr	r0, .L74+4
+ 985              	.LVL103:
+ 986 000e FFF7FEFF 		bl	rt_assert_handler
+ 987              	.LVL104:
+ 988              	.L68:
+ 708:rt_thread/src/thread.c **** 
+ 989              		.loc 1 708 0 is_stmt 1
+ 990 0012 2046     		mov	r0, r4
+ 991 0014 FFF7FEFF 		bl	rt_object_get_type
+ 992              	.LVL105:
+ 993 0018 0128     		cmp	r0, #1
+ 994 001a 05D0     		beq	.L69
+ 708:rt_thread/src/thread.c **** 
+ 995              		.loc 1 708 0 is_stmt 0 discriminator 1
+ 996 001c 4FF43172 		mov	r2, #708
+ 997 0020 1549     		ldr	r1, .L74
+ 998 0022 1748     		ldr	r0, .L74+8
+ 999 0024 FFF7FEFF 		bl	rt_assert_handler
+ 1000              	.LVL106:
+ 1001              	.L69:
+ 712:rt_thread/src/thread.c ****     {
+ 1002              		.loc 1 712 0 is_stmt 1
+ 1003 0028 94F83430 		ldrb	r3, [r4, #52]	@ zero_extendqisi2
+ 1004 002c 03F00F03 		and	r3, r3, #15
+ 1005 0030 012B     		cmp	r3, #1
+ 1006 0032 1BD1     		bne	.L71
+ 721:rt_thread/src/thread.c **** 
+ 1007              		.loc 1 721 0
+ 1008 0034 FFF7FEFF 		bl	rt_hw_interrupt_disable
+ 1009              	.LVL107:
+ 1010 0038 0546     		mov	r5, r0
+ 1011              	.LVL108:
+ 724:rt_thread/src/thread.c ****     rt_schedule_remove_thread(thread);
+ 1012              		.loc 1 724 0
+ 1013 003a 94F83430 		ldrb	r3, [r4, #52]	@ zero_extendqisi2
+ 1014 003e 23F00F03 		bic	r3, r3, #15
+ 1015 0042 43F00203 		orr	r3, r3, #2
+ 1016 0046 84F83430 		strb	r3, [r4, #52]
+ 725:rt_thread/src/thread.c **** 
+ 1017              		.loc 1 725 0
+ 1018 004a 2046     		mov	r0, r4
+ 1019              	.LVL109:
+ 1020 004c FFF7FEFF 		bl	rt_schedule_remove_thread
+ARM GAS  /tmp/ccDetQHQ.s 			page 36
+
+
+ 1021              	.LVL110:
+ 728:rt_thread/src/thread.c **** 
+ 1022              		.loc 1 728 0
+ 1023 0050 04F16000 		add	r0, r4, #96
+ 1024 0054 FFF7FEFF 		bl	rt_timer_stop
+ 1025              	.LVL111:
+ 731:rt_thread/src/thread.c **** 
+ 1026              		.loc 1 731 0
+ 1027 0058 2846     		mov	r0, r5
+ 1028 005a FFF7FEFF 		bl	rt_hw_interrupt_enable
+ 1029              	.LVL112:
+ 733:rt_thread/src/thread.c ****     return RT_EOK;
+ 1030              		.loc 1 733 0
+ 1031 005e 094B     		ldr	r3, .L74+12
+ 1032 0060 1B68     		ldr	r3, [r3]
+ 1033 0062 33B1     		cbz	r3, .L72
+ 733:rt_thread/src/thread.c ****     return RT_EOK;
+ 1034              		.loc 1 733 0 is_stmt 0 discriminator 1
+ 1035 0064 2046     		mov	r0, r4
+ 1036 0066 9847     		blx	r3
+ 1037              	.LVL113:
+ 734:rt_thread/src/thread.c **** }
+ 1038              		.loc 1 734 0 is_stmt 1 discriminator 1
+ 1039 0068 0020     		movs	r0, #0
+ 1040 006a 38BD     		pop	{r3, r4, r5, pc}
+ 1041              	.LVL114:
+ 1042              	.L71:
+ 717:rt_thread/src/thread.c ****     }
+ 1043              		.loc 1 717 0
+ 1044 006c 4FF0FF30 		mov	r0, #-1
+ 1045 0070 38BD     		pop	{r3, r4, r5, pc}
+ 1046              	.LVL115:
+ 1047              	.L72:
+ 734:rt_thread/src/thread.c **** }
+ 1048              		.loc 1 734 0
+ 1049 0072 0020     		movs	r0, #0
+ 735:rt_thread/src/thread.c **** RTM_EXPORT(rt_thread_suspend);
+ 1050              		.loc 1 735 0
+ 1051 0074 38BD     		pop	{r3, r4, r5, pc}
+ 1052              	.LVL116:
+ 1053              	.L75:
+ 1054 0076 00BF     		.align	2
+ 1055              	.L74:
+ 1056 0078 00000000 		.word	.LANCHOR8
+ 1057 007c 24000000 		.word	.LC1
+ 1058 0080 74000000 		.word	.LC3
+ 1059 0084 00000000 		.word	.LANCHOR3
+ 1060              		.cfi_endproc
+ 1061              	.LFE32:
+ 1063              		.section	.text.rt_thread_sleep,"ax",%progbits
+ 1064              		.align	2
+ 1065              		.global	rt_thread_sleep
+ 1066              		.thumb
+ 1067              		.thumb_func
+ 1069              	rt_thread_sleep:
+ 1070              	.LFB27:
+ 494:rt_thread/src/thread.c ****     register rt_base_t temp;
+ARM GAS  /tmp/ccDetQHQ.s 			page 37
+
+
+ 1071              		.loc 1 494 0
+ 1072              		.cfi_startproc
+ 1073              		@ args = 0, pretend = 0, frame = 8
+ 1074              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1075              	.LVL117:
+ 1076 0000 70B5     		push	{r4, r5, r6, lr}
+ 1077              	.LCFI15:
+ 1078              		.cfi_def_cfa_offset 16
+ 1079              		.cfi_offset 4, -16
+ 1080              		.cfi_offset 5, -12
+ 1081              		.cfi_offset 6, -8
+ 1082              		.cfi_offset 14, -4
+ 1083 0002 82B0     		sub	sp, sp, #8
+ 1084              	.LCFI16:
+ 1085              		.cfi_def_cfa_offset 24
+ 1086 0004 0190     		str	r0, [sp, #4]
+ 499:rt_thread/src/thread.c ****     /* set to current thread */
+ 1087              		.loc 1 499 0
+ 1088 0006 FFF7FEFF 		bl	rt_hw_interrupt_disable
+ 1089              	.LVL118:
+ 1090 000a 0646     		mov	r6, r0
+ 1091              	.LVL119:
+ 501:rt_thread/src/thread.c ****     RT_ASSERT(thread != RT_NULL);
+ 1092              		.loc 1 501 0
+ 1093 000c 174B     		ldr	r3, .L81
+ 1094 000e 1C68     		ldr	r4, [r3]
+ 1095              	.LVL120:
+ 502:rt_thread/src/thread.c ****     RT_ASSERT(rt_object_get_type((rt_object_t)thread) == RT_Object_Class_Thread);
+ 1096              		.loc 1 502 0
+ 1097 0010 2CB9     		cbnz	r4, .L77
+ 502:rt_thread/src/thread.c ****     RT_ASSERT(rt_object_get_type((rt_object_t)thread) == RT_Object_Class_Thread);
+ 1098              		.loc 1 502 0 is_stmt 0 discriminator 1
+ 1099 0012 4FF4FB72 		mov	r2, #502
+ 1100 0016 1649     		ldr	r1, .L81+4
+ 1101 0018 1648     		ldr	r0, .L81+8
+ 1102              	.LVL121:
+ 1103 001a FFF7FEFF 		bl	rt_assert_handler
+ 1104              	.LVL122:
+ 1105              	.L77:
+ 503:rt_thread/src/thread.c **** 
+ 1106              		.loc 1 503 0 is_stmt 1
+ 1107 001e 2046     		mov	r0, r4
+ 1108 0020 FFF7FEFF 		bl	rt_object_get_type
+ 1109              	.LVL123:
+ 1110 0024 0128     		cmp	r0, #1
+ 1111 0026 05D0     		beq	.L78
+ 503:rt_thread/src/thread.c **** 
+ 1112              		.loc 1 503 0 is_stmt 0 discriminator 1
+ 1113 0028 40F2F712 		movw	r2, #503
+ 1114 002c 1049     		ldr	r1, .L81+4
+ 1115 002e 1248     		ldr	r0, .L81+12
+ 1116 0030 FFF7FEFF 		bl	rt_assert_handler
+ 1117              	.LVL124:
+ 1118              	.L78:
+ 506:rt_thread/src/thread.c **** 
+ 1119              		.loc 1 506 0 is_stmt 1
+ 1120 0034 2046     		mov	r0, r4
+ARM GAS  /tmp/ccDetQHQ.s 			page 38
+
+
+ 1121 0036 FFF7FEFF 		bl	rt_thread_suspend
+ 1122              	.LVL125:
+ 509:rt_thread/src/thread.c ****     rt_timer_start(&(thread->thread_timer));
+ 1123              		.loc 1 509 0
+ 1124 003a 04F16005 		add	r5, r4, #96
+ 1125 003e 01AA     		add	r2, sp, #4
+ 1126              	.LVL126:
+ 1127 0040 0021     		movs	r1, #0
+ 1128 0042 2846     		mov	r0, r5
+ 1129 0044 FFF7FEFF 		bl	rt_timer_control
+ 1130              	.LVL127:
+ 510:rt_thread/src/thread.c **** 
+ 1131              		.loc 1 510 0
+ 1132 0048 2846     		mov	r0, r5
+ 1133 004a FFF7FEFF 		bl	rt_timer_start
+ 1134              	.LVL128:
+ 513:rt_thread/src/thread.c **** 
+ 1135              		.loc 1 513 0
+ 1136 004e 3046     		mov	r0, r6
+ 1137 0050 FFF7FEFF 		bl	rt_hw_interrupt_enable
+ 1138              	.LVL129:
+ 515:rt_thread/src/thread.c **** 
+ 1139              		.loc 1 515 0
+ 1140 0054 FFF7FEFF 		bl	rt_schedule
+ 1141              	.LVL130:
+ 518:rt_thread/src/thread.c ****         thread->error = RT_EOK;
+ 1142              		.loc 1 518 0
+ 1143 0058 236B     		ldr	r3, [r4, #48]
+ 1144 005a 13F1020F 		cmn	r3, #2
+ 1145 005e 01D1     		bne	.L79
+ 519:rt_thread/src/thread.c **** 
+ 1146              		.loc 1 519 0
+ 1147 0060 0023     		movs	r3, #0
+ 1148 0062 2363     		str	r3, [r4, #48]
+ 1149              	.L79:
+ 522:rt_thread/src/thread.c **** 
+ 1150              		.loc 1 522 0
+ 1151 0064 0020     		movs	r0, #0
+ 1152 0066 02B0     		add	sp, sp, #8
+ 1153              	.LCFI17:
+ 1154              		.cfi_def_cfa_offset 16
+ 1155              		@ sp needed
+ 1156 0068 70BD     		pop	{r4, r5, r6, pc}
+ 1157              	.LVL131:
+ 1158              	.L82:
+ 1159 006a 00BF     		.align	2
+ 1160              	.L81:
+ 1161 006c 00000000 		.word	rt_current_thread
+ 1162 0070 00000000 		.word	.LANCHOR9
+ 1163 0074 24000000 		.word	.LC1
+ 1164 0078 74000000 		.word	.LC3
+ 1165              		.cfi_endproc
+ 1166              	.LFE27:
+ 1168              		.section	.text.rt_thread_delay,"ax",%progbits
+ 1169              		.align	2
+ 1170              		.global	rt_thread_delay
+ 1171              		.thumb
+ARM GAS  /tmp/ccDetQHQ.s 			page 39
+
+
+ 1172              		.thumb_func
+ 1174              	rt_thread_delay:
+ 1175              	.LFB28:
+ 532:rt_thread/src/thread.c ****     return rt_thread_sleep(tick);
+ 1176              		.loc 1 532 0
+ 1177              		.cfi_startproc
+ 1178              		@ args = 0, pretend = 0, frame = 0
+ 1179              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1180              	.LVL132:
+ 1181 0000 08B5     		push	{r3, lr}
+ 1182              	.LCFI18:
+ 1183              		.cfi_def_cfa_offset 8
+ 1184              		.cfi_offset 3, -8
+ 1185              		.cfi_offset 14, -4
+ 533:rt_thread/src/thread.c **** }
+ 1186              		.loc 1 533 0
+ 1187 0002 FFF7FEFF 		bl	rt_thread_sleep
+ 1188              	.LVL133:
+ 534:rt_thread/src/thread.c **** RTM_EXPORT(rt_thread_delay);
+ 1189              		.loc 1 534 0
+ 1190 0006 08BD     		pop	{r3, pc}
+ 1191              		.cfi_endproc
+ 1192              	.LFE28:
+ 1194              		.section	.text.rt_thread_mdelay,"ax",%progbits
+ 1195              		.align	2
+ 1196              		.global	rt_thread_mdelay
+ 1197              		.thumb
+ 1198              		.thumb_func
+ 1200              	rt_thread_mdelay:
+ 1201              	.LFB30:
+ 602:rt_thread/src/thread.c ****     rt_tick_t tick;
+ 1202              		.loc 1 602 0
+ 1203              		.cfi_startproc
+ 1204              		@ args = 0, pretend = 0, frame = 0
+ 1205              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1206              	.LVL134:
+ 1207 0000 08B5     		push	{r3, lr}
+ 1208              	.LCFI19:
+ 1209              		.cfi_def_cfa_offset 8
+ 1210              		.cfi_offset 3, -8
+ 1211              		.cfi_offset 14, -4
+ 605:rt_thread/src/thread.c **** 
+ 1212              		.loc 1 605 0
+ 1213 0002 FFF7FEFF 		bl	rt_tick_from_millisecond
+ 1214              	.LVL135:
+ 607:rt_thread/src/thread.c **** }
+ 1215              		.loc 1 607 0
+ 1216 0006 FFF7FEFF 		bl	rt_thread_sleep
+ 1217              	.LVL136:
+ 608:rt_thread/src/thread.c **** RTM_EXPORT(rt_thread_mdelay);
+ 1218              		.loc 1 608 0
+ 1219 000a 08BD     		pop	{r3, pc}
+ 1220              		.cfi_endproc
+ 1221              	.LFE30:
+ 1223              		.section	.text.rt_thread_delay_until,"ax",%progbits
+ 1224              		.align	2
+ 1225              		.global	rt_thread_delay_until
+ARM GAS  /tmp/ccDetQHQ.s 			page 40
+
+
+ 1226              		.thumb
+ 1227              		.thumb_func
+ 1229              	rt_thread_delay_until:
+ 1230              	.LFB29:
+ 546:rt_thread/src/thread.c ****     register rt_base_t level;
+ 1231              		.loc 1 546 0
+ 1232              		.cfi_startproc
+ 1233              		@ args = 0, pretend = 0, frame = 0
+ 1234              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1235              	.LVL137:
+ 1236 0000 F8B5     		push	{r3, r4, r5, r6, r7, lr}
+ 1237              	.LCFI20:
+ 1238              		.cfi_def_cfa_offset 24
+ 1239              		.cfi_offset 3, -24
+ 1240              		.cfi_offset 4, -20
+ 1241              		.cfi_offset 5, -16
+ 1242              		.cfi_offset 6, -12
+ 1243              		.cfi_offset 7, -8
+ 1244              		.cfi_offset 14, -4
+ 1245 0002 0F46     		mov	r7, r1
+ 550:rt_thread/src/thread.c **** 
+ 1246              		.loc 1 550 0
+ 1247 0004 0446     		mov	r4, r0
+ 1248 0006 28B9     		cbnz	r0, .L88
+ 550:rt_thread/src/thread.c **** 
+ 1249              		.loc 1 550 0 is_stmt 0 discriminator 1
+ 1250 0008 40F22622 		movw	r2, #550
+ 1251 000c 2449     		ldr	r1, .L94
+ 1252              	.LVL138:
+ 1253 000e 2548     		ldr	r0, .L94+4
+ 1254              	.LVL139:
+ 1255 0010 FFF7FEFF 		bl	rt_assert_handler
+ 1256              	.LVL140:
+ 1257              	.L88:
+ 553:rt_thread/src/thread.c ****     RT_ASSERT(thread != RT_NULL);
+ 1258              		.loc 1 553 0 is_stmt 1
+ 1259 0014 FFF7FEFF 		bl	rt_thread_self
+ 1260              	.LVL141:
+ 554:rt_thread/src/thread.c ****     RT_ASSERT(rt_object_get_type((rt_object_t)thread) == RT_Object_Class_Thread);
+ 1261              		.loc 1 554 0
+ 1262 0018 0546     		mov	r5, r0
+ 1263 001a 28B9     		cbnz	r0, .L89
+ 554:rt_thread/src/thread.c ****     RT_ASSERT(rt_object_get_type((rt_object_t)thread) == RT_Object_Class_Thread);
+ 1264              		.loc 1 554 0 is_stmt 0 discriminator 1
+ 1265 001c 40F22A22 		movw	r2, #554
+ 1266 0020 1F49     		ldr	r1, .L94
+ 1267 0022 2148     		ldr	r0, .L94+8
+ 1268              	.LVL142:
+ 1269 0024 FFF7FEFF 		bl	rt_assert_handler
+ 1270              	.LVL143:
+ 1271              	.L89:
+ 555:rt_thread/src/thread.c **** 
+ 1272              		.loc 1 555 0 is_stmt 1
+ 1273 0028 2846     		mov	r0, r5
+ 1274 002a FFF7FEFF 		bl	rt_object_get_type
+ 1275              	.LVL144:
+ 1276 002e 0128     		cmp	r0, #1
+ARM GAS  /tmp/ccDetQHQ.s 			page 41
+
+
+ 1277 0030 05D0     		beq	.L90
+ 555:rt_thread/src/thread.c **** 
+ 1278              		.loc 1 555 0 is_stmt 0 discriminator 1
+ 1279 0032 40F22B22 		movw	r2, #555
+ 1280 0036 1A49     		ldr	r1, .L94
+ 1281 0038 1C48     		ldr	r0, .L94+12
+ 1282 003a FFF7FEFF 		bl	rt_assert_handler
+ 1283              	.LVL145:
+ 1284              	.L90:
+ 558:rt_thread/src/thread.c **** 
+ 1285              		.loc 1 558 0 is_stmt 1
+ 1286 003e FFF7FEFF 		bl	rt_hw_interrupt_disable
+ 1287              	.LVL146:
+ 1288 0042 0646     		mov	r6, r0
+ 1289              	.LVL147:
+ 560:rt_thread/src/thread.c ****     {
+ 1290              		.loc 1 560 0
+ 1291 0044 FFF7FEFF 		bl	rt_tick_get
+ 1292              	.LVL148:
+ 1293 0048 2368     		ldr	r3, [r4]
+ 1294 004a C01A     		subs	r0, r0, r3
+ 1295 004c B842     		cmp	r0, r7
+ 1296 004e 1ED2     		bcs	.L91
+ 562:rt_thread/src/thread.c **** 
+ 1297              		.loc 1 562 0
+ 1298 0050 FFF7FEFF 		bl	rt_tick_get
+ 1299              	.LVL149:
+ 1300 0054 2368     		ldr	r3, [r4]
+ 1301 0056 C01A     		subs	r0, r0, r3
+ 1302 0058 3844     		add	r0, r0, r7
+ 1303 005a 2060     		str	r0, [r4]
+ 565:rt_thread/src/thread.c **** 
+ 1304              		.loc 1 565 0
+ 1305 005c 2846     		mov	r0, r5
+ 1306 005e FFF7FEFF 		bl	rt_thread_suspend
+ 1307              	.LVL150:
+ 568:rt_thread/src/thread.c ****         rt_timer_start(&(thread->thread_timer));
+ 1308              		.loc 1 568 0
+ 1309 0062 05F16007 		add	r7, r5, #96
+ 1310              	.LVL151:
+ 1311 0066 2246     		mov	r2, r4
+ 1312 0068 0021     		movs	r1, #0
+ 1313 006a 3846     		mov	r0, r7
+ 1314 006c FFF7FEFF 		bl	rt_timer_control
+ 1315              	.LVL152:
+ 569:rt_thread/src/thread.c **** 
+ 1316              		.loc 1 569 0
+ 1317 0070 3846     		mov	r0, r7
+ 1318 0072 FFF7FEFF 		bl	rt_timer_start
+ 1319              	.LVL153:
+ 572:rt_thread/src/thread.c **** 
+ 1320              		.loc 1 572 0
+ 1321 0076 3046     		mov	r0, r6
+ 1322 0078 FFF7FEFF 		bl	rt_hw_interrupt_enable
+ 1323              	.LVL154:
+ 574:rt_thread/src/thread.c **** 
+ 1324              		.loc 1 574 0
+ARM GAS  /tmp/ccDetQHQ.s 			page 42
+
+
+ 1325 007c FFF7FEFF 		bl	rt_schedule
+ 1326              	.LVL155:
+ 577:rt_thread/src/thread.c ****         {
+ 1327              		.loc 1 577 0
+ 1328 0080 2B6B     		ldr	r3, [r5, #48]
+ 1329 0082 13F1020F 		cmn	r3, #2
+ 1330 0086 05D1     		bne	.L92
+ 579:rt_thread/src/thread.c ****         }
+ 1331              		.loc 1 579 0
+ 1332 0088 0023     		movs	r3, #0
+ 1333 008a 2B63     		str	r3, [r5, #48]
+ 1334 008c 02E0     		b	.L92
+ 1335              	.LVL156:
+ 1336              	.L91:
+ 584:rt_thread/src/thread.c ****     }
+ 1337              		.loc 1 584 0
+ 1338 008e 3046     		mov	r0, r6
+ 1339 0090 FFF7FEFF 		bl	rt_hw_interrupt_enable
+ 1340              	.LVL157:
+ 1341              	.L92:
+ 588:rt_thread/src/thread.c **** 
+ 1342              		.loc 1 588 0
+ 1343 0094 FFF7FEFF 		bl	rt_tick_get
+ 1344              	.LVL158:
+ 1345 0098 2060     		str	r0, [r4]
+ 591:rt_thread/src/thread.c **** RTM_EXPORT(rt_thread_delay_until);
+ 1346              		.loc 1 591 0
+ 1347 009a 0020     		movs	r0, #0
+ 1348 009c F8BD     		pop	{r3, r4, r5, r6, r7, pc}
+ 1349              	.LVL159:
+ 1350              	.L95:
+ 1351 009e 00BF     		.align	2
+ 1352              	.L94:
+ 1353 00a0 00000000 		.word	.LANCHOR10
+ 1354 00a4 3C010000 		.word	.LC7
+ 1355 00a8 24000000 		.word	.LC1
+ 1356 00ac 74000000 		.word	.LC3
+ 1357              		.cfi_endproc
+ 1358              	.LFE29:
+ 1360              		.section	.text.rt_thread_resume,"ax",%progbits
+ 1361              		.align	2
+ 1362              		.global	rt_thread_resume
+ 1363              		.thumb
+ 1364              		.thumb_func
+ 1366              	rt_thread_resume:
+ 1367              	.LFB33:
+ 746:rt_thread/src/thread.c ****     register rt_base_t temp;
+ 1368              		.loc 1 746 0
+ 1369              		.cfi_startproc
+ 1370              		@ args = 0, pretend = 0, frame = 0
+ 1371              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1372              	.LVL160:
+ 1373 0000 38B5     		push	{r3, r4, r5, lr}
+ 1374              	.LCFI21:
+ 1375              		.cfi_def_cfa_offset 16
+ 1376              		.cfi_offset 3, -16
+ 1377              		.cfi_offset 4, -12
+ARM GAS  /tmp/ccDetQHQ.s 			page 43
+
+
+ 1378              		.cfi_offset 5, -8
+ 1379              		.cfi_offset 14, -4
+ 750:rt_thread/src/thread.c ****     RT_ASSERT(rt_object_get_type((rt_object_t)thread) == RT_Object_Class_Thread);
+ 1380              		.loc 1 750 0
+ 1381 0002 0446     		mov	r4, r0
+ 1382 0004 28B9     		cbnz	r0, .L97
+ 750:rt_thread/src/thread.c ****     RT_ASSERT(rt_object_get_type((rt_object_t)thread) == RT_Object_Class_Thread);
+ 1383              		.loc 1 750 0 is_stmt 0 discriminator 1
+ 1384 0006 40F2EE22 		movw	r2, #750
+ 1385 000a 1C49     		ldr	r1, .L103
+ 1386 000c 1C48     		ldr	r0, .L103+4
+ 1387              	.LVL161:
+ 1388 000e FFF7FEFF 		bl	rt_assert_handler
+ 1389              	.LVL162:
+ 1390              	.L97:
+ 751:rt_thread/src/thread.c **** 
+ 1391              		.loc 1 751 0 is_stmt 1
+ 1392 0012 2046     		mov	r0, r4
+ 1393 0014 FFF7FEFF 		bl	rt_object_get_type
+ 1394              	.LVL163:
+ 1395 0018 0128     		cmp	r0, #1
+ 1396 001a 05D0     		beq	.L98
+ 751:rt_thread/src/thread.c **** 
+ 1397              		.loc 1 751 0 is_stmt 0 discriminator 1
+ 1398 001c 40F2EF22 		movw	r2, #751
+ 1399 0020 1649     		ldr	r1, .L103
+ 1400 0022 1848     		ldr	r0, .L103+8
+ 1401 0024 FFF7FEFF 		bl	rt_assert_handler
+ 1402              	.LVL164:
+ 1403              	.L98:
+ 755:rt_thread/src/thread.c ****     {
+ 1404              		.loc 1 755 0 is_stmt 1
+ 1405 0028 94F83430 		ldrb	r3, [r4, #52]	@ zero_extendqisi2
+ 1406 002c 03F00F03 		and	r3, r3, #15
+ 1407 0030 022B     		cmp	r3, #2
+ 1408 0032 1DD1     		bne	.L100
+ 764:rt_thread/src/thread.c **** 
+ 1409              		.loc 1 764 0
+ 1410 0034 FFF7FEFF 		bl	rt_hw_interrupt_disable
+ 1411              	.LVL165:
+ 1412 0038 0546     		mov	r5, r0
+ 1413              	.LVL166:
+ 767:rt_thread/src/thread.c **** 
+ 1414              		.loc 1 767 0
+ 1415 003a 04F11403 		add	r3, r4, #20
+ 1416              	.LBB32:
+ 1417              	.LBB33:
+  88:rt_thread/include/rtservice.h ****     n->prev->next = n->next;
+ 1418              		.loc 2 88 0
+ 1419 003e 6269     		ldr	r2, [r4, #20]
+ 1420 0040 A169     		ldr	r1, [r4, #24]
+ 1421 0042 5160     		str	r1, [r2, #4]
+  89:rt_thread/include/rtservice.h **** 
+ 1422              		.loc 2 89 0
+ 1423 0044 A269     		ldr	r2, [r4, #24]
+ 1424 0046 6169     		ldr	r1, [r4, #20]
+ 1425 0048 1160     		str	r1, [r2]
+ARM GAS  /tmp/ccDetQHQ.s 			page 44
+
+
+ 1426              		.loc 2 91 0
+ 1427 004a A361     		str	r3, [r4, #24]
+ 1428 004c 6361     		str	r3, [r4, #20]
+ 1429              	.LBE33:
+ 1430              	.LBE32:
+ 769:rt_thread/src/thread.c **** 
+ 1431              		.loc 1 769 0
+ 1432 004e 04F16000 		add	r0, r4, #96
+ 1433              	.LVL167:
+ 1434 0052 FFF7FEFF 		bl	rt_timer_stop
+ 1435              	.LVL168:
+ 772:rt_thread/src/thread.c **** 
+ 1436              		.loc 1 772 0
+ 1437 0056 2846     		mov	r0, r5
+ 1438 0058 FFF7FEFF 		bl	rt_hw_interrupt_enable
+ 1439              	.LVL169:
+ 775:rt_thread/src/thread.c **** 
+ 1440              		.loc 1 775 0
+ 1441 005c 2046     		mov	r0, r4
+ 1442 005e FFF7FEFF 		bl	rt_schedule_insert_thread
+ 1443              	.LVL170:
+ 777:rt_thread/src/thread.c ****     return RT_EOK;
+ 1444              		.loc 1 777 0
+ 1445 0062 094B     		ldr	r3, .L103+12
+ 1446 0064 1B68     		ldr	r3, [r3]
+ 1447 0066 33B1     		cbz	r3, .L101
+ 777:rt_thread/src/thread.c ****     return RT_EOK;
+ 1448              		.loc 1 777 0 is_stmt 0 discriminator 1
+ 1449 0068 2046     		mov	r0, r4
+ 1450 006a 9847     		blx	r3
+ 1451              	.LVL171:
+ 778:rt_thread/src/thread.c **** }
+ 1452              		.loc 1 778 0 is_stmt 1 discriminator 1
+ 1453 006c 0020     		movs	r0, #0
+ 1454 006e 38BD     		pop	{r3, r4, r5, pc}
+ 1455              	.LVL172:
+ 1456              	.L100:
+ 760:rt_thread/src/thread.c ****     }
+ 1457              		.loc 1 760 0
+ 1458 0070 4FF0FF30 		mov	r0, #-1
+ 1459 0074 38BD     		pop	{r3, r4, r5, pc}
+ 1460              	.LVL173:
+ 1461              	.L101:
+ 778:rt_thread/src/thread.c **** }
+ 1462              		.loc 1 778 0
+ 1463 0076 0020     		movs	r0, #0
+ 779:rt_thread/src/thread.c **** RTM_EXPORT(rt_thread_resume);
+ 1464              		.loc 1 779 0
+ 1465 0078 38BD     		pop	{r3, r4, r5, pc}
+ 1466              	.LVL174:
+ 1467              	.L104:
+ 1468 007a 00BF     		.align	2
+ 1469              	.L103:
+ 1470 007c 00000000 		.word	.LANCHOR11
+ 1471 0080 24000000 		.word	.LC1
+ 1472 0084 74000000 		.word	.LC3
+ 1473 0088 00000000 		.word	.LANCHOR4
+ARM GAS  /tmp/ccDetQHQ.s 			page 45
+
+
+ 1474              		.cfi_endproc
+ 1475              	.LFE33:
+ 1477              		.section	.text.rt_thread_startup,"ax",%progbits
+ 1478              		.align	2
+ 1479              		.global	rt_thread_startup
+ 1480              		.thumb
+ 1481              		.thumb_func
+ 1483              	rt_thread_startup:
+ 1484              	.LFB22:
+ 266:rt_thread/src/thread.c ****     /* thread check */
+ 1485              		.loc 1 266 0
+ 1486              		.cfi_startproc
+ 1487              		@ args = 0, pretend = 0, frame = 0
+ 1488              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1489              	.LVL175:
+ 1490 0000 10B5     		push	{r4, lr}
+ 1491              	.LCFI22:
+ 1492              		.cfi_def_cfa_offset 8
+ 1493              		.cfi_offset 4, -8
+ 1494              		.cfi_offset 14, -4
+ 268:rt_thread/src/thread.c ****     RT_ASSERT((thread->stat & RT_THREAD_STAT_MASK) == RT_THREAD_INIT);
+ 1495              		.loc 1 268 0
+ 1496 0002 0446     		mov	r4, r0
+ 1497 0004 28B9     		cbnz	r0, .L106
+ 268:rt_thread/src/thread.c ****     RT_ASSERT((thread->stat & RT_THREAD_STAT_MASK) == RT_THREAD_INIT);
+ 1498              		.loc 1 268 0 is_stmt 0 discriminator 1
+ 1499 0006 4FF48672 		mov	r2, #268
+ 1500 000a 1749     		ldr	r1, .L111
+ 1501 000c 1748     		ldr	r0, .L111+4
+ 1502              	.LVL176:
+ 1503 000e FFF7FEFF 		bl	rt_assert_handler
+ 1504              	.LVL177:
+ 1505              	.L106:
+ 269:rt_thread/src/thread.c ****     RT_ASSERT(rt_object_get_type((rt_object_t)thread) == RT_Object_Class_Thread);
+ 1506              		.loc 1 269 0 is_stmt 1
+ 1507 0012 94F83430 		ldrb	r3, [r4, #52]	@ zero_extendqisi2
+ 1508 0016 13F00F0F 		tst	r3, #15
+ 1509 001a 05D0     		beq	.L107
+ 269:rt_thread/src/thread.c ****     RT_ASSERT(rt_object_get_type((rt_object_t)thread) == RT_Object_Class_Thread);
+ 1510              		.loc 1 269 0 is_stmt 0 discriminator 1
+ 1511 001c 40F20D12 		movw	r2, #269
+ 1512 0020 1149     		ldr	r1, .L111
+ 1513 0022 1348     		ldr	r0, .L111+8
+ 1514 0024 FFF7FEFF 		bl	rt_assert_handler
+ 1515              	.LVL178:
+ 1516              	.L107:
+ 270:rt_thread/src/thread.c **** 
+ 1517              		.loc 1 270 0 is_stmt 1
+ 1518 0028 2046     		mov	r0, r4
+ 1519 002a FFF7FEFF 		bl	rt_object_get_type
+ 1520              	.LVL179:
+ 1521 002e 0128     		cmp	r0, #1
+ 1522 0030 05D0     		beq	.L108
+ 270:rt_thread/src/thread.c **** 
+ 1523              		.loc 1 270 0 is_stmt 0 discriminator 1
+ 1524 0032 4FF48772 		mov	r2, #270
+ 1525 0036 0C49     		ldr	r1, .L111
+ARM GAS  /tmp/ccDetQHQ.s 			page 46
+
+
+ 1526 0038 0E48     		ldr	r0, .L111+12
+ 1527 003a FFF7FEFF 		bl	rt_assert_handler
+ 1528              	.LVL180:
+ 1529              	.L108:
+ 273:rt_thread/src/thread.c **** 
+ 1530              		.loc 1 273 0 is_stmt 1
+ 1531 003e 94F83620 		ldrb	r2, [r4, #54]	@ zero_extendqisi2
+ 1532 0042 84F83520 		strb	r2, [r4, #53]
+ 281:rt_thread/src/thread.c **** #endif
+ 1533              		.loc 1 281 0
+ 1534 0046 0123     		movs	r3, #1
+ 1535 0048 9340     		lsls	r3, r3, r2
+ 1536 004a A363     		str	r3, [r4, #56]
+ 287:rt_thread/src/thread.c ****     /* then resume it */
+ 1537              		.loc 1 287 0
+ 1538 004c 0223     		movs	r3, #2
+ 1539 004e 84F83430 		strb	r3, [r4, #52]
+ 289:rt_thread/src/thread.c ****     if (rt_thread_self() != RT_NULL)
+ 1540              		.loc 1 289 0
+ 1541 0052 2046     		mov	r0, r4
+ 1542 0054 FFF7FEFF 		bl	rt_thread_resume
+ 1543              	.LVL181:
+ 290:rt_thread/src/thread.c ****     {
+ 1544              		.loc 1 290 0
+ 1545 0058 FFF7FEFF 		bl	rt_thread_self
+ 1546              	.LVL182:
+ 1547 005c 08B1     		cbz	r0, .L109
+ 293:rt_thread/src/thread.c ****     }
+ 1548              		.loc 1 293 0
+ 1549 005e FFF7FEFF 		bl	rt_schedule
+ 1550              	.LVL183:
+ 1551              	.L109:
+ 297:rt_thread/src/thread.c **** RTM_EXPORT(rt_thread_startup);
+ 1552              		.loc 1 297 0
+ 1553 0062 0020     		movs	r0, #0
+ 1554 0064 10BD     		pop	{r4, pc}
+ 1555              	.LVL184:
+ 1556              	.L112:
+ 1557 0066 00BF     		.align	2
+ 1558              	.L111:
+ 1559 0068 00000000 		.word	.LANCHOR12
+ 1560 006c 24000000 		.word	.LC1
+ 1561 0070 4C010000 		.word	.LC8
+ 1562 0074 74000000 		.word	.LC3
+ 1563              		.cfi_endproc
+ 1564              	.LFE22:
+ 1566              		.section	.text.rt_thread_control,"ax",%progbits
+ 1567              		.align	2
+ 1568              		.global	rt_thread_control
+ 1569              		.thumb
+ 1570              		.thumb_func
+ 1572              	rt_thread_control:
+ 1573              	.LFB31:
+ 624:rt_thread/src/thread.c ****     register rt_base_t temp;
+ 1574              		.loc 1 624 0
+ 1575              		.cfi_startproc
+ 1576              		@ args = 0, pretend = 0, frame = 0
+ARM GAS  /tmp/ccDetQHQ.s 			page 47
+
+
+ 1577              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1578              	.LVL185:
+ 1579 0000 70B5     		push	{r4, r5, r6, lr}
+ 1580              	.LCFI23:
+ 1581              		.cfi_def_cfa_offset 16
+ 1582              		.cfi_offset 4, -16
+ 1583              		.cfi_offset 5, -12
+ 1584              		.cfi_offset 6, -8
+ 1585              		.cfi_offset 14, -4
+ 1586 0002 0D46     		mov	r5, r1
+ 1587 0004 1646     		mov	r6, r2
+ 628:rt_thread/src/thread.c ****     RT_ASSERT(rt_object_get_type((rt_object_t)thread) == RT_Object_Class_Thread);
+ 1588              		.loc 1 628 0
+ 1589 0006 0446     		mov	r4, r0
+ 1590 0008 28B9     		cbnz	r0, .L114
+ 628:rt_thread/src/thread.c ****     RT_ASSERT(rt_object_get_type((rt_object_t)thread) == RT_Object_Class_Thread);
+ 1591              		.loc 1 628 0 is_stmt 0 discriminator 1
+ 1592 000a 4FF41D72 		mov	r2, #628
+ 1593              	.LVL186:
+ 1594 000e 2049     		ldr	r1, .L125
+ 1595              	.LVL187:
+ 1596 0010 2048     		ldr	r0, .L125+4
+ 1597              	.LVL188:
+ 1598 0012 FFF7FEFF 		bl	rt_assert_handler
+ 1599              	.LVL189:
+ 1600              	.L114:
+ 629:rt_thread/src/thread.c **** 
+ 1601              		.loc 1 629 0 is_stmt 1
+ 1602 0016 2046     		mov	r0, r4
+ 1603 0018 FFF7FEFF 		bl	rt_object_get_type
+ 1604              	.LVL190:
+ 1605 001c 0128     		cmp	r0, #1
+ 1606 001e 05D0     		beq	.L115
+ 629:rt_thread/src/thread.c **** 
+ 1607              		.loc 1 629 0 is_stmt 0 discriminator 1
+ 1608 0020 40F27522 		movw	r2, #629
+ 1609 0024 1A49     		ldr	r1, .L125
+ 1610 0026 1C48     		ldr	r0, .L125+8
+ 1611 0028 FFF7FEFF 		bl	rt_assert_handler
+ 1612              	.LVL191:
+ 1613              	.L115:
+ 631:rt_thread/src/thread.c ****     {
+ 1614              		.loc 1 631 0 is_stmt 1
+ 1615 002c 012D     		cmp	r5, #1
+ 1616 002e 28D0     		beq	.L117
+ 1617 0030 022D     		cmp	r5, #2
+ 1618 0032 01D0     		beq	.L118
+ 1619 0034 4DBB     		cbnz	r5, .L123
+ 1620 0036 20E0     		b	.L119
+ 1621              	.L118:
+ 635:rt_thread/src/thread.c **** 
+ 1622              		.loc 1 635 0
+ 1623 0038 FFF7FEFF 		bl	rt_hw_interrupt_disable
+ 1624              	.LVL192:
+ 1625 003c 0546     		mov	r5, r0
+ 1626              	.LVL193:
+ 638:rt_thread/src/thread.c ****         {
+ARM GAS  /tmp/ccDetQHQ.s 			page 48
+
+
+ 1627              		.loc 1 638 0
+ 1628 003e 94F83430 		ldrb	r3, [r4, #52]	@ zero_extendqisi2
+ 1629 0042 03F00F03 		and	r3, r3, #15
+ 1630 0046 012B     		cmp	r3, #1
+ 1631 0048 0CD1     		bne	.L120
+ 641:rt_thread/src/thread.c **** 
+ 1632              		.loc 1 641 0
+ 1633 004a 2046     		mov	r0, r4
+ 1634              	.LVL194:
+ 1635 004c FFF7FEFF 		bl	rt_schedule_remove_thread
+ 1636              	.LVL195:
+ 644:rt_thread/src/thread.c **** 
+ 1637              		.loc 1 644 0
+ 1638 0050 3278     		ldrb	r2, [r6]	@ zero_extendqisi2
+ 1639 0052 84F83520 		strb	r2, [r4, #53]
+ 652:rt_thread/src/thread.c **** #endif
+ 1640              		.loc 1 652 0
+ 1641 0056 0123     		movs	r3, #1
+ 1642 0058 9340     		lsls	r3, r3, r2
+ 1643 005a A363     		str	r3, [r4, #56]
+ 656:rt_thread/src/thread.c ****         }
+ 1644              		.loc 1 656 0
+ 1645 005c 2046     		mov	r0, r4
+ 1646 005e FFF7FEFF 		bl	rt_schedule_insert_thread
+ 1647              	.LVL196:
+ 1648 0062 05E0     		b	.L121
+ 1649              	.LVL197:
+ 1650              	.L120:
+ 660:rt_thread/src/thread.c **** 
+ 1651              		.loc 1 660 0
+ 1652 0064 3278     		ldrb	r2, [r6]	@ zero_extendqisi2
+ 1653 0066 84F83520 		strb	r2, [r4, #53]
+ 668:rt_thread/src/thread.c **** #endif
+ 1654              		.loc 1 668 0
+ 1655 006a 0123     		movs	r3, #1
+ 1656 006c 9340     		lsls	r3, r3, r2
+ 1657 006e A363     		str	r3, [r4, #56]
+ 1658              	.LVL198:
+ 1659              	.L121:
+ 673:rt_thread/src/thread.c ****         break;
+ 1660              		.loc 1 673 0
+ 1661 0070 2846     		mov	r0, r5
+ 1662 0072 FFF7FEFF 		bl	rt_hw_interrupt_enable
+ 1663              	.LVL199:
+ 688:rt_thread/src/thread.c **** }
+ 1664              		.loc 1 688 0
+ 1665 0076 0020     		movs	r0, #0
+ 674:rt_thread/src/thread.c **** 
+ 1666              		.loc 1 674 0
+ 1667 0078 70BD     		pop	{r4, r5, r6, pc}
+ 1668              	.LVL200:
+ 1669              	.L119:
+ 677:rt_thread/src/thread.c **** 
+ 1670              		.loc 1 677 0
+ 1671 007a 2046     		mov	r0, r4
+ 1672 007c FFF7FEFF 		bl	rt_thread_startup
+ 1673              	.LVL201:
+ARM GAS  /tmp/ccDetQHQ.s 			page 49
+
+
+ 1674 0080 70BD     		pop	{r4, r5, r6, pc}
+ 1675              	.LVL202:
+ 1676              	.L117:
+ 681:rt_thread/src/thread.c **** #endif
+ 1677              		.loc 1 681 0
+ 1678 0082 2046     		mov	r0, r4
+ 1679 0084 FFF7FEFF 		bl	rt_thread_delete
+ 1680              	.LVL203:
+ 1681 0088 70BD     		pop	{r4, r5, r6, pc}
+ 1682              	.LVL204:
+ 1683              	.L123:
+ 688:rt_thread/src/thread.c **** }
+ 1684              		.loc 1 688 0
+ 1685 008a 0020     		movs	r0, #0
+ 689:rt_thread/src/thread.c **** RTM_EXPORT(rt_thread_control);
+ 1686              		.loc 1 689 0
+ 1687 008c 70BD     		pop	{r4, r5, r6, pc}
+ 1688              	.LVL205:
+ 1689              	.L126:
+ 1690 008e 00BF     		.align	2
+ 1691              	.L125:
+ 1692 0090 00000000 		.word	.LANCHOR13
+ 1693 0094 24000000 		.word	.LC1
+ 1694 0098 74000000 		.word	.LC3
+ 1695              		.cfi_endproc
+ 1696              	.LFE31:
+ 1698              		.section	.text.rt_thread_find,"ax",%progbits
+ 1699              		.align	2
+ 1700              		.global	rt_thread_find
+ 1701              		.thumb
+ 1702              		.thumb_func
+ 1704              	rt_thread_find:
+ 1705              	.LFB35:
+ 810:rt_thread/src/thread.c **** }
+ 811:rt_thread/src/thread.c **** RTM_EXPORT(rt_thread_timeout);
+ 812:rt_thread/src/thread.c **** 
+ 813:rt_thread/src/thread.c **** /**
+ 814:rt_thread/src/thread.c ****  * This function will find the specified thread.
+ 815:rt_thread/src/thread.c ****  *
+ 816:rt_thread/src/thread.c ****  * @param name the name of thread finding
+ 817:rt_thread/src/thread.c ****  *
+ 818:rt_thread/src/thread.c ****  * @return the found thread
+ 819:rt_thread/src/thread.c ****  *
+ 820:rt_thread/src/thread.c ****  * @note please don't invoke this function in interrupt status.
+ 821:rt_thread/src/thread.c ****  */
+ 822:rt_thread/src/thread.c **** rt_thread_t rt_thread_find(char *name)
+ 823:rt_thread/src/thread.c **** {
+ 1706              		.loc 1 823 0
+ 1707              		.cfi_startproc
+ 1708              		@ args = 0, pretend = 0, frame = 0
+ 1709              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1710              	.LVL206:
+ 1711 0000 F8B5     		push	{r3, r4, r5, r6, r7, lr}
+ 1712              	.LCFI24:
+ 1713              		.cfi_def_cfa_offset 24
+ 1714              		.cfi_offset 3, -24
+ 1715              		.cfi_offset 4, -20
+ARM GAS  /tmp/ccDetQHQ.s 			page 50
+
+
+ 1716              		.cfi_offset 5, -16
+ 1717              		.cfi_offset 6, -12
+ 1718              		.cfi_offset 7, -8
+ 1719              		.cfi_offset 14, -4
+ 1720 0002 0746     		mov	r7, r0
+ 824:rt_thread/src/thread.c ****     struct rt_object_information *information;
+ 825:rt_thread/src/thread.c ****     struct rt_object *object;
+ 826:rt_thread/src/thread.c ****     struct rt_list_node *node;
+ 827:rt_thread/src/thread.c **** 
+ 828:rt_thread/src/thread.c ****     /* enter critical */
+ 829:rt_thread/src/thread.c ****     if (rt_thread_self() != RT_NULL)
+ 1721              		.loc 1 829 0
+ 1722 0004 FFF7FEFF 		bl	rt_thread_self
+ 1723              	.LVL207:
+ 1724 0008 08B1     		cbz	r0, .L128
+ 830:rt_thread/src/thread.c ****         rt_enter_critical();
+ 1725              		.loc 1 830 0
+ 1726 000a FFF7FEFF 		bl	rt_enter_critical
+ 1727              	.LVL208:
+ 1728              	.L128:
+ 831:rt_thread/src/thread.c **** 
+ 832:rt_thread/src/thread.c ****     /* try to find device object */
+ 833:rt_thread/src/thread.c ****     information = rt_object_get_information(RT_Object_Class_Thread);
+ 1729              		.loc 1 833 0
+ 1730 000e 0120     		movs	r0, #1
+ 1731 0010 FFF7FEFF 		bl	rt_object_get_information
+ 1732              	.LVL209:
+ 834:rt_thread/src/thread.c ****     RT_ASSERT(information != RT_NULL);
+ 1733              		.loc 1 834 0
+ 1734 0014 0646     		mov	r6, r0
+ 1735 0016 28B9     		cbnz	r0, .L129
+ 1736              		.loc 1 834 0 is_stmt 0 discriminator 1
+ 1737 0018 40F24232 		movw	r2, #834
+ 1738 001c 1049     		ldr	r1, .L136
+ 1739 001e 1148     		ldr	r0, .L136+4
+ 1740              	.LVL210:
+ 1741 0020 FFF7FEFF 		bl	rt_assert_handler
+ 1742              	.LVL211:
+ 1743              	.L129:
+ 835:rt_thread/src/thread.c ****     for (node  = information->object_list.next;
+ 1744              		.loc 1 835 0 is_stmt 1
+ 1745 0024 7468     		ldr	r4, [r6, #4]
+ 1746              	.LVL212:
+ 1747 0026 0EE0     		b	.L130
+ 1748              	.L133:
+ 836:rt_thread/src/thread.c ****          node != &(information->object_list);
+ 837:rt_thread/src/thread.c ****          node  = node->next)
+ 838:rt_thread/src/thread.c ****     {
+ 839:rt_thread/src/thread.c ****         object = rt_list_entry(node, struct rt_object, list);
+ 1749              		.loc 1 839 0
+ 1750 0028 A4F10C05 		sub	r5, r4, #12
+ 1751              	.LVL213:
+ 840:rt_thread/src/thread.c ****         if (rt_strncmp(object->name, name, RT_NAME_MAX) == 0)
+ 1752              		.loc 1 840 0
+ 1753 002c 0822     		movs	r2, #8
+ 1754 002e 3946     		mov	r1, r7
+ 1755 0030 2846     		mov	r0, r5
+ARM GAS  /tmp/ccDetQHQ.s 			page 51
+
+
+ 1756 0032 FFF7FEFF 		bl	rt_strncmp
+ 1757              	.LVL214:
+ 1758 0036 28B9     		cbnz	r0, .L131
+ 841:rt_thread/src/thread.c ****         {
+ 842:rt_thread/src/thread.c ****             /* leave critical */
+ 843:rt_thread/src/thread.c ****             if (rt_thread_self() != RT_NULL)
+ 1759              		.loc 1 843 0
+ 1760 0038 FFF7FEFF 		bl	rt_thread_self
+ 1761              	.LVL215:
+ 1762 003c 68B1     		cbz	r0, .L132
+ 844:rt_thread/src/thread.c ****                 rt_exit_critical();
+ 1763              		.loc 1 844 0
+ 1764 003e FFF7FEFF 		bl	rt_exit_critical
+ 1765              	.LVL216:
+ 1766 0042 0AE0     		b	.L132
+ 1767              	.L131:
+ 837:rt_thread/src/thread.c ****     {
+ 1768              		.loc 1 837 0
+ 1769 0044 2468     		ldr	r4, [r4]
+ 1770              	.LVL217:
+ 1771              	.L130:
+ 836:rt_thread/src/thread.c ****          node  = node->next)
+ 1772              		.loc 1 836 0 discriminator 1
+ 1773 0046 331D     		adds	r3, r6, #4
+ 835:rt_thread/src/thread.c ****          node != &(information->object_list);
+ 1774              		.loc 1 835 0 discriminator 1
+ 1775 0048 9C42     		cmp	r4, r3
+ 1776 004a EDD1     		bne	.L133
+ 845:rt_thread/src/thread.c **** 
+ 846:rt_thread/src/thread.c ****             return (rt_thread_t)object;
+ 847:rt_thread/src/thread.c ****         }
+ 848:rt_thread/src/thread.c ****     }
+ 849:rt_thread/src/thread.c **** 
+ 850:rt_thread/src/thread.c ****     /* leave critical */
+ 851:rt_thread/src/thread.c ****     if (rt_thread_self() != RT_NULL)
+ 1777              		.loc 1 851 0
+ 1778 004c FFF7FEFF 		bl	rt_thread_self
+ 1779              	.LVL218:
+ 1780 0050 0546     		mov	r5, r0
+ 1781 0052 10B1     		cbz	r0, .L132
+ 852:rt_thread/src/thread.c ****         rt_exit_critical();
+ 1782              		.loc 1 852 0
+ 1783 0054 FFF7FEFF 		bl	rt_exit_critical
+ 1784              	.LVL219:
+ 853:rt_thread/src/thread.c **** 
+ 854:rt_thread/src/thread.c ****     /* not found */
+ 855:rt_thread/src/thread.c ****     return RT_NULL;
+ 1785              		.loc 1 855 0
+ 1786 0058 0025     		movs	r5, #0
+ 1787              	.L132:
+ 856:rt_thread/src/thread.c **** }
+ 1788              		.loc 1 856 0
+ 1789 005a 2846     		mov	r0, r5
+ 1790 005c F8BD     		pop	{r3, r4, r5, r6, r7, pc}
+ 1791              	.LVL220:
+ 1792              	.L137:
+ 1793 005e 00BF     		.align	2
+ARM GAS  /tmp/ccDetQHQ.s 			page 52
+
+
+ 1794              	.L136:
+ 1795 0060 00000000 		.word	.LANCHOR14
+ 1796 0064 84010000 		.word	.LC9
+ 1797              		.cfi_endproc
+ 1798              	.LFE35:
+ 1800              		.section	.rodata.__FUNCTION__.5359,"a",%progbits
+ 1801              		.align	2
+ 1802              		.set	.LANCHOR6,. + 0
+ 1805              	__FUNCTION__.5359:
+ 1806 0000 72745F74 		.ascii	"rt_thread_detach\000"
+ 1806      68726561 
+ 1806      645F6465 
+ 1806      74616368 
+ 1806      00
+ 1807              		.section	.rodata.__FUNCTION__.5347,"a",%progbits
+ 1808              		.align	2
+ 1809              		.set	.LANCHOR5,. + 0
+ 1812              	__FUNCTION__.5347:
+ 1813 0000 72745F74 		.ascii	"rt_thread_init\000"
+ 1813      68726561 
+ 1813      645F696E 
+ 1813      697400
+ 1814              		.section	.rodata.__FUNCTION__.5354,"a",%progbits
+ 1815              		.align	2
+ 1816              		.set	.LANCHOR12,. + 0
+ 1819              	__FUNCTION__.5354:
+ 1820 0000 72745F74 		.ascii	"rt_thread_startup\000"
+ 1820      68726561 
+ 1820      645F7374 
+ 1820      61727475 
+ 1820      7000
+ 1821              		.section	.rodata.__FUNCTION__.5407,"a",%progbits
+ 1822              		.align	2
+ 1823              		.set	.LANCHOR13,. + 0
+ 1826              	__FUNCTION__.5407:
+ 1827 0000 72745F74 		.ascii	"rt_thread_control\000"
+ 1827      68726561 
+ 1827      645F636F 
+ 1827      6E74726F 
+ 1827      6C00
+ 1828              		.section	.bss.rt_thread_suspend_hook,"aw",%nobits
+ 1829              		.align	2
+ 1830              		.set	.LANCHOR3,. + 0
+ 1833              	rt_thread_suspend_hook:
+ 1834 0000 00000000 		.space	4
+ 1835              		.section	.rodata.__FUNCTION__.5417,"a",%progbits
+ 1836              		.align	2
+ 1837              		.set	.LANCHOR8,. + 0
+ 1840              	__FUNCTION__.5417:
+ 1841 0000 72745F74 		.ascii	"rt_thread_suspend\000"
+ 1841      68726561 
+ 1841      645F7375 
+ 1841      7370656E 
+ 1841      6400
+ 1842              		.section	.bss.rt_thread_resume_hook,"aw",%nobits
+ 1843              		.align	2
+ 1844              		.set	.LANCHOR4,. + 0
+ARM GAS  /tmp/ccDetQHQ.s 			page 53
+
+
+ 1847              	rt_thread_resume_hook:
+ 1848 0000 00000000 		.space	4
+ 1849              		.section	.rodata.__FUNCTION__.5375,"a",%progbits
+ 1850              		.align	2
+ 1851              		.set	.LANCHOR7,. + 0
+ 1854              	__FUNCTION__.5375:
+ 1855 0000 72745F74 		.ascii	"rt_thread_delete\000"
+ 1855      68726561 
+ 1855      645F6465 
+ 1855      6C657465 
+ 1855      00
+ 1856              		.section	.rodata.__FUNCTION__.5427,"a",%progbits
+ 1857              		.align	2
+ 1858              		.set	.LANCHOR2,. + 0
+ 1861              	__FUNCTION__.5427:
+ 1862 0000 72745F74 		.ascii	"rt_thread_timeout\000"
+ 1862      68726561 
+ 1862      645F7469 
+ 1862      6D656F75 
+ 1862      7400
+ 1863              		.section	.rodata.str1.4,"aMS",%progbits,1
+ 1864              		.align	2
+ 1865              	.LC0:
+ 1866 0000 7072696F 		.ascii	"priority < RT_THREAD_PRIORITY_MAX\000"
+ 1866      72697479 
+ 1866      203C2052 
+ 1866      545F5448 
+ 1866      52454144 
+ 1867 0022 0000     		.space	2
+ 1868              	.LC1:
+ 1869 0024 74687265 		.ascii	"thread != RT_NULL\000"
+ 1869      61642021 
+ 1869      3D205254 
+ 1869      5F4E554C 
+ 1869      4C00
+ 1870 0036 0000     		.space	2
+ 1871              	.LC2:
+ 1872 0038 28746872 		.ascii	"(thread->stat & RT_THREAD_STAT_MASK) == RT_THREAD_S"
+ 1872      6561642D 
+ 1872      3E737461 
+ 1872      74202620 
+ 1872      52545F54 
+ 1873 006b 55535045 		.ascii	"USPEND\000"
+ 1873      4E4400
+ 1874 0072 0000     		.space	2
+ 1875              	.LC3:
+ 1876 0074 72745F6F 		.ascii	"rt_object_get_type((rt_object_t)thread) == RT_Objec"
+ 1876      626A6563 
+ 1876      745F6765 
+ 1876      745F7479 
+ 1876      70652828 
+ 1877 00a7 745F436C 		.ascii	"t_Class_Thread\000"
+ 1877      6173735F 
+ 1877      54687265 
+ 1877      616400
+ 1878 00b6 0000     		.space	2
+ 1879              	.LC4:
+ARM GAS  /tmp/ccDetQHQ.s 			page 54
+
+
+ 1880 00b8 73746163 		.ascii	"stack_start != RT_NULL\000"
+ 1880      6B5F7374 
+ 1880      61727420 
+ 1880      213D2052 
+ 1880      545F4E55 
+ 1881 00cf 00       		.space	1
+ 1882              	.LC5:
+ 1883 00d0 72745F6F 		.ascii	"rt_object_is_systemobject((rt_object_t)thread)\000"
+ 1883      626A6563 
+ 1883      745F6973 
+ 1883      5F737973 
+ 1883      74656D6F 
+ 1884 00ff 00       		.space	1
+ 1885              	.LC6:
+ 1886 0100 72745F6F 		.ascii	"rt_object_is_systemobject((rt_object_t)thread) == R"
+ 1886      626A6563 
+ 1886      745F6973 
+ 1886      5F737973 
+ 1886      74656D6F 
+ 1887 0133 545F4641 		.ascii	"T_FALSE\000"
+ 1887      4C534500 
+ 1888 013b 00       		.space	1
+ 1889              	.LC7:
+ 1890 013c 7469636B 		.ascii	"tick != RT_NULL\000"
+ 1890      20213D20 
+ 1890      52545F4E 
+ 1890      554C4C00 
+ 1891              	.LC8:
+ 1892 014c 28746872 		.ascii	"(thread->stat & RT_THREAD_STAT_MASK) == RT_THREAD_I"
+ 1892      6561642D 
+ 1892      3E737461 
+ 1892      74202620 
+ 1892      52545F54 
+ 1893 017f 4E495400 		.ascii	"NIT\000"
+ 1894 0183 00       		.space	1
+ 1895              	.LC9:
+ 1896 0184 696E666F 		.ascii	"information != RT_NULL\000"
+ 1896      726D6174 
+ 1896      696F6E20 
+ 1896      213D2052 
+ 1896      545F4E55 
+ 1897              		.section	.rodata.__FUNCTION__.5434,"a",%progbits
+ 1898              		.align	2
+ 1899              		.set	.LANCHOR14,. + 0
+ 1902              	__FUNCTION__.5434:
+ 1903 0000 72745F74 		.ascii	"rt_thread_find\000"
+ 1903      68726561 
+ 1903      645F6669 
+ 1903      6E6400
+ 1904              		.section	.rodata.__FUNCTION__.5386,"a",%progbits
+ 1905              		.align	2
+ 1906              		.set	.LANCHOR9,. + 0
+ 1909              	__FUNCTION__.5386:
+ 1910 0000 72745F74 		.ascii	"rt_thread_sleep\000"
+ 1910      68726561 
+ 1910      645F736C 
+ 1910      65657000 
+ARM GAS  /tmp/ccDetQHQ.s 			page 55
+
+
+ 1911              		.section	.rodata.__FUNCTION__.5396,"a",%progbits
+ 1912              		.align	2
+ 1913              		.set	.LANCHOR10,. + 0
+ 1916              	__FUNCTION__.5396:
+ 1917 0000 72745F74 		.ascii	"rt_thread_delay_until\000"
+ 1917      68726561 
+ 1917      645F6465 
+ 1917      6C61795F 
+ 1917      756E7469 
+ 1918              		.section	.rodata.__FUNCTION__.5422,"a",%progbits
+ 1919              		.align	2
+ 1920              		.set	.LANCHOR11,. + 0
+ 1923              	__FUNCTION__.5422:
+ 1924 0000 72745F74 		.ascii	"rt_thread_resume\000"
+ 1924      68726561 
+ 1924      645F7265 
+ 1924      73756D65 
+ 1924      00
+ 1925              		.section	.bss.rt_thread_inited_hook,"aw",%nobits
+ 1926              		.align	2
+ 1927              		.set	.LANCHOR1,. + 0
+ 1930              	rt_thread_inited_hook:
+ 1931 0000 00000000 		.space	4
+ 1932              		.section	.rodata.__FUNCTION__.5335,"a",%progbits
+ 1933              		.align	2
+ 1934              		.set	.LANCHOR0,. + 0
+ 1937              	__FUNCTION__.5335:
+ 1938 0000 5F72745F 		.ascii	"_rt_thread_init\000"
+ 1938      74687265 
+ 1938      61645F69 
+ 1938      6E697400 
+ 1939              		.text
+ 1940              	.Letext0:
+ 1941              		.file 3 "rt_thread/include/rtdef.h"
+ 1942              		.file 4 "rt_thread/include/rthw.h"
+ 1943              		.file 5 "rt_thread/include/rtthread.h"
+ARM GAS  /tmp/ccDetQHQ.s 			page 56
+
+
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 thread.c
+     /tmp/ccDetQHQ.s:20     .text.rt_thread_exit:0000000000000000 $t
+     /tmp/ccDetQHQ.s:25     .text.rt_thread_exit:0000000000000000 rt_thread_exit
+     /tmp/ccDetQHQ.s:108    .text.rt_thread_exit:0000000000000054 $d
+     /tmp/ccDetQHQ.s:114    .text._rt_thread_init:0000000000000000 $t
+     /tmp/ccDetQHQ.s:118    .text._rt_thread_init:0000000000000000 _rt_thread_init
+     /tmp/ccDetQHQ.s:248    .text._rt_thread_init:0000000000000094 $d
+     /tmp/ccDetQHQ.s:262    .text.rt_thread_timeout:0000000000000000 rt_thread_timeout
+     /tmp/ccDetQHQ.s:257    .text.rt_thread_timeout:0000000000000000 $t
+     /tmp/ccDetQHQ.s:345    .text.rt_thread_timeout:0000000000000068 $d
+     /tmp/ccDetQHQ.s:353    .text.rt_thread_suspend_sethook:0000000000000000 $t
+     /tmp/ccDetQHQ.s:358    .text.rt_thread_suspend_sethook:0000000000000000 rt_thread_suspend_sethook
+     /tmp/ccDetQHQ.s:373    .text.rt_thread_suspend_sethook:0000000000000008 $d
+     /tmp/ccDetQHQ.s:378    .text.rt_thread_resume_sethook:0000000000000000 $t
+     /tmp/ccDetQHQ.s:383    .text.rt_thread_resume_sethook:0000000000000000 rt_thread_resume_sethook
+     /tmp/ccDetQHQ.s:398    .text.rt_thread_resume_sethook:0000000000000008 $d
+     /tmp/ccDetQHQ.s:403    .text.rt_thread_inited_sethook:0000000000000000 $t
+     /tmp/ccDetQHQ.s:408    .text.rt_thread_inited_sethook:0000000000000000 rt_thread_inited_sethook
+     /tmp/ccDetQHQ.s:423    .text.rt_thread_inited_sethook:0000000000000008 $d
+     /tmp/ccDetQHQ.s:428    .text.rt_thread_init:0000000000000000 $t
+     /tmp/ccDetQHQ.s:433    .text.rt_thread_init:0000000000000000 rt_thread_init
+     /tmp/ccDetQHQ.s:508    .text.rt_thread_init:0000000000000054 $d
+     /tmp/ccDetQHQ.s:515    .text.rt_thread_self:0000000000000000 $t
+     /tmp/ccDetQHQ.s:520    .text.rt_thread_self:0000000000000000 rt_thread_self
+     /tmp/ccDetQHQ.s:534    .text.rt_thread_self:0000000000000008 $d
+     /tmp/ccDetQHQ.s:539    .text.rt_thread_detach:0000000000000000 $t
+     /tmp/ccDetQHQ.s:544    .text.rt_thread_detach:0000000000000000 rt_thread_detach
+     /tmp/ccDetQHQ.s:656    .text.rt_thread_detach:0000000000000090 $d
+     /tmp/ccDetQHQ.s:665    .text.rt_thread_create:0000000000000000 $t
+     /tmp/ccDetQHQ.s:670    .text.rt_thread_create:0000000000000000 rt_thread_create
+     /tmp/ccDetQHQ.s:753    .text.rt_thread_delete:0000000000000000 $t
+     /tmp/ccDetQHQ.s:758    .text.rt_thread_delete:0000000000000000 rt_thread_delete
+     /tmp/ccDetQHQ.s:853    .text.rt_thread_delete:0000000000000078 $d
+     /tmp/ccDetQHQ.s:862    .text.rt_thread_yield:0000000000000000 $t
+     /tmp/ccDetQHQ.s:867    .text.rt_thread_yield:0000000000000000 rt_thread_yield
+     /tmp/ccDetQHQ.s:953    .text.rt_thread_yield:0000000000000058 $d
+     /tmp/ccDetQHQ.s:959    .text.rt_thread_suspend:0000000000000000 $t
+     /tmp/ccDetQHQ.s:964    .text.rt_thread_suspend:0000000000000000 rt_thread_suspend
+     /tmp/ccDetQHQ.s:1056   .text.rt_thread_suspend:0000000000000078 $d
+     /tmp/ccDetQHQ.s:1064   .text.rt_thread_sleep:0000000000000000 $t
+     /tmp/ccDetQHQ.s:1069   .text.rt_thread_sleep:0000000000000000 rt_thread_sleep
+     /tmp/ccDetQHQ.s:1161   .text.rt_thread_sleep:000000000000006c $d
+     /tmp/ccDetQHQ.s:1169   .text.rt_thread_delay:0000000000000000 $t
+     /tmp/ccDetQHQ.s:1174   .text.rt_thread_delay:0000000000000000 rt_thread_delay
+     /tmp/ccDetQHQ.s:1195   .text.rt_thread_mdelay:0000000000000000 $t
+     /tmp/ccDetQHQ.s:1200   .text.rt_thread_mdelay:0000000000000000 rt_thread_mdelay
+     /tmp/ccDetQHQ.s:1224   .text.rt_thread_delay_until:0000000000000000 $t
+     /tmp/ccDetQHQ.s:1229   .text.rt_thread_delay_until:0000000000000000 rt_thread_delay_until
+     /tmp/ccDetQHQ.s:1353   .text.rt_thread_delay_until:00000000000000a0 $d
+     /tmp/ccDetQHQ.s:1361   .text.rt_thread_resume:0000000000000000 $t
+     /tmp/ccDetQHQ.s:1366   .text.rt_thread_resume:0000000000000000 rt_thread_resume
+     /tmp/ccDetQHQ.s:1470   .text.rt_thread_resume:000000000000007c $d
+     /tmp/ccDetQHQ.s:1478   .text.rt_thread_startup:0000000000000000 $t
+     /tmp/ccDetQHQ.s:1483   .text.rt_thread_startup:0000000000000000 rt_thread_startup
+     /tmp/ccDetQHQ.s:1559   .text.rt_thread_startup:0000000000000068 $d
+     /tmp/ccDetQHQ.s:1567   .text.rt_thread_control:0000000000000000 $t
+ARM GAS  /tmp/ccDetQHQ.s 			page 57
+
+
+     /tmp/ccDetQHQ.s:1572   .text.rt_thread_control:0000000000000000 rt_thread_control
+     /tmp/ccDetQHQ.s:1692   .text.rt_thread_control:0000000000000090 $d
+     /tmp/ccDetQHQ.s:1699   .text.rt_thread_find:0000000000000000 $t
+     /tmp/ccDetQHQ.s:1704   .text.rt_thread_find:0000000000000000 rt_thread_find
+     /tmp/ccDetQHQ.s:1795   .text.rt_thread_find:0000000000000060 $d
+     /tmp/ccDetQHQ.s:1801   .rodata.__FUNCTION__.5359:0000000000000000 $d
+     /tmp/ccDetQHQ.s:1805   .rodata.__FUNCTION__.5359:0000000000000000 __FUNCTION__.5359
+     /tmp/ccDetQHQ.s:1808   .rodata.__FUNCTION__.5347:0000000000000000 $d
+     /tmp/ccDetQHQ.s:1812   .rodata.__FUNCTION__.5347:0000000000000000 __FUNCTION__.5347
+     /tmp/ccDetQHQ.s:1815   .rodata.__FUNCTION__.5354:0000000000000000 $d
+     /tmp/ccDetQHQ.s:1819   .rodata.__FUNCTION__.5354:0000000000000000 __FUNCTION__.5354
+     /tmp/ccDetQHQ.s:1822   .rodata.__FUNCTION__.5407:0000000000000000 $d
+     /tmp/ccDetQHQ.s:1826   .rodata.__FUNCTION__.5407:0000000000000000 __FUNCTION__.5407
+     /tmp/ccDetQHQ.s:1829   .bss.rt_thread_suspend_hook:0000000000000000 $d
+     /tmp/ccDetQHQ.s:1833   .bss.rt_thread_suspend_hook:0000000000000000 rt_thread_suspend_hook
+     /tmp/ccDetQHQ.s:1836   .rodata.__FUNCTION__.5417:0000000000000000 $d
+     /tmp/ccDetQHQ.s:1840   .rodata.__FUNCTION__.5417:0000000000000000 __FUNCTION__.5417
+     /tmp/ccDetQHQ.s:1843   .bss.rt_thread_resume_hook:0000000000000000 $d
+     /tmp/ccDetQHQ.s:1847   .bss.rt_thread_resume_hook:0000000000000000 rt_thread_resume_hook
+     /tmp/ccDetQHQ.s:1850   .rodata.__FUNCTION__.5375:0000000000000000 $d
+     /tmp/ccDetQHQ.s:1854   .rodata.__FUNCTION__.5375:0000000000000000 __FUNCTION__.5375
+     /tmp/ccDetQHQ.s:1857   .rodata.__FUNCTION__.5427:0000000000000000 $d
+     /tmp/ccDetQHQ.s:1861   .rodata.__FUNCTION__.5427:0000000000000000 __FUNCTION__.5427
+     /tmp/ccDetQHQ.s:1864   .rodata.str1.4:0000000000000000 $d
+     /tmp/ccDetQHQ.s:1898   .rodata.__FUNCTION__.5434:0000000000000000 $d
+     /tmp/ccDetQHQ.s:1902   .rodata.__FUNCTION__.5434:0000000000000000 __FUNCTION__.5434
+     /tmp/ccDetQHQ.s:1905   .rodata.__FUNCTION__.5386:0000000000000000 $d
+     /tmp/ccDetQHQ.s:1909   .rodata.__FUNCTION__.5386:0000000000000000 __FUNCTION__.5386
+     /tmp/ccDetQHQ.s:1912   .rodata.__FUNCTION__.5396:0000000000000000 $d
+     /tmp/ccDetQHQ.s:1916   .rodata.__FUNCTION__.5396:0000000000000000 __FUNCTION__.5396
+     /tmp/ccDetQHQ.s:1919   .rodata.__FUNCTION__.5422:0000000000000000 $d
+     /tmp/ccDetQHQ.s:1923   .rodata.__FUNCTION__.5422:0000000000000000 __FUNCTION__.5422
+     /tmp/ccDetQHQ.s:1926   .bss.rt_thread_inited_hook:0000000000000000 $d
+     /tmp/ccDetQHQ.s:1930   .bss.rt_thread_inited_hook:0000000000000000 rt_thread_inited_hook
+     /tmp/ccDetQHQ.s:1933   .rodata.__FUNCTION__.5335:0000000000000000 $d
+     /tmp/ccDetQHQ.s:1937   .rodata.__FUNCTION__.5335:0000000000000000 __FUNCTION__.5335
+                     .debug_frame:0000000000000010 $d
+
+UNDEFINED SYMBOLS
+rt_hw_interrupt_disable
+rt_schedule_remove_thread
+rt_timer_detach
+rt_object_is_systemobject
+rt_object_detach
+rt_hw_interrupt_enable
+rt_schedule
+rt_current_thread
+rt_thread_defunct
+rt_memset
+rt_hw_stack_init
+rt_assert_handler
+rt_timer_init
+rt_object_get_type
+rt_schedule_insert_thread
+rt_object_init
+rt_object_allocate
+rt_malloc
+ARM GAS  /tmp/ccDetQHQ.s 			page 58
+
+
+rt_object_delete
+rt_thread_priority_table
+rt_timer_stop
+rt_timer_control
+rt_timer_start
+rt_tick_from_millisecond
+rt_tick_get
+rt_enter_critical
+rt_object_get_information
+rt_strncmp
+rt_exit_critical

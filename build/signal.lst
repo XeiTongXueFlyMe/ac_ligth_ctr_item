@@ -1,0 +1,2327 @@
+ARM GAS  /tmp/ccmkdsNJ.s 			page 1
+
+
+   1              		.syntax unified
+   2              		.cpu cortex-m3
+   3              		.fpu softvfp
+   4              		.eabi_attribute 20, 1
+   5              		.eabi_attribute 21, 1
+   6              		.eabi_attribute 23, 3
+   7              		.eabi_attribute 24, 1
+   8              		.eabi_attribute 25, 1
+   9              		.eabi_attribute 26, 1
+  10              		.eabi_attribute 30, 1
+  11              		.eabi_attribute 34, 1
+  12              		.eabi_attribute 18, 4
+  13              		.thumb
+  14              		.syntax unified
+  15              		.file	"signal.c"
+  16              		.text
+  17              	.Ltext0:
+  18              		.cfi_sections	.debug_frame
+  19              		.section	.text._signal_default_handler,"ax",%progbits
+  20              		.align	2
+  21              		.thumb
+  22              		.thumb_func
+  24              	_signal_default_handler:
+  25              	.LFB15:
+  26              		.file 1 "rt_thread/src/signal.c"
+   1:rt_thread/src/signal.c **** /*
+   2:rt_thread/src/signal.c ****  * Copyright (c) 2006-2018, RT-Thread Development Team
+   3:rt_thread/src/signal.c ****  *
+   4:rt_thread/src/signal.c ****  * SPDX-License-Identifier: Apache-2.0
+   5:rt_thread/src/signal.c ****  *
+   6:rt_thread/src/signal.c ****  * Change Logs:
+   7:rt_thread/src/signal.c ****  * Date           Author       Notes
+   8:rt_thread/src/signal.c ****  * 2017/10/5      Bernard      the first version
+   9:rt_thread/src/signal.c ****  * 2019/02/15     Jesven       fixed the problem of si_list
+  10:rt_thread/src/signal.c ****  */
+  11:rt_thread/src/signal.c **** 
+  12:rt_thread/src/signal.c **** #include <stdint.h>
+  13:rt_thread/src/signal.c **** #include <string.h>
+  14:rt_thread/src/signal.c **** 
+  15:rt_thread/src/signal.c **** #include <rthw.h>
+  16:rt_thread/src/signal.c **** #include <rtthread.h>
+  17:rt_thread/src/signal.c **** 
+  18:rt_thread/src/signal.c **** #ifdef RT_USING_SIGNALS
+  19:rt_thread/src/signal.c **** 
+  20:rt_thread/src/signal.c **** #ifndef RT_SIG_INFO_MAX
+  21:rt_thread/src/signal.c **** #define RT_SIG_INFO_MAX 32
+  22:rt_thread/src/signal.c **** #endif
+  23:rt_thread/src/signal.c **** 
+  24:rt_thread/src/signal.c **** #define DBG_TAG           "SIGN"
+  25:rt_thread/src/signal.c **** #define DBG_LVL           DBG_WARNING
+  26:rt_thread/src/signal.c **** #include <rtdbg.h>
+  27:rt_thread/src/signal.c **** 
+  28:rt_thread/src/signal.c **** #define sig_mask(sig_no)    (1u << sig_no)
+  29:rt_thread/src/signal.c **** #define sig_valid(sig_no)   (sig_no >= 0 && sig_no < RT_SIG_MAX)
+  30:rt_thread/src/signal.c **** 
+  31:rt_thread/src/signal.c **** struct siginfo_node
+  32:rt_thread/src/signal.c **** {
+ARM GAS  /tmp/ccmkdsNJ.s 			page 2
+
+
+  33:rt_thread/src/signal.c ****     siginfo_t si;
+  34:rt_thread/src/signal.c ****     struct rt_slist_node list;
+  35:rt_thread/src/signal.c **** };
+  36:rt_thread/src/signal.c **** 
+  37:rt_thread/src/signal.c **** static struct rt_mempool *_rt_siginfo_pool;
+  38:rt_thread/src/signal.c **** static void _signal_deliver(rt_thread_t tid);
+  39:rt_thread/src/signal.c **** void rt_thread_handle_sig(rt_bool_t clean_state);
+  40:rt_thread/src/signal.c **** 
+  41:rt_thread/src/signal.c **** static void _signal_default_handler(int signo)
+  42:rt_thread/src/signal.c **** {
+  27              		.loc 1 42 0
+  28              		.cfi_startproc
+  29              		@ args = 0, pretend = 0, frame = 0
+  30              		@ frame_needed = 0, uses_anonymous_args = 0
+  31              		@ link register save eliminated.
+  32              	.LVL0:
+  33 0000 7047     		bx	lr
+  34              		.cfi_endproc
+  35              	.LFE15:
+  37 0002 00BF     		.section	.text.rt_signal_mask,"ax",%progbits
+  38              		.align	2
+  39              		.global	rt_signal_mask
+  40              		.thumb
+  41              		.thumb_func
+  43              	rt_signal_mask:
+  44              	.LFB19:
+  43:rt_thread/src/signal.c ****     LOG_I("handled signo[%d] with default action.", signo);
+  44:rt_thread/src/signal.c ****     return ;
+  45:rt_thread/src/signal.c **** }
+  46:rt_thread/src/signal.c **** 
+  47:rt_thread/src/signal.c **** static void _signal_entry(void *parameter)
+  48:rt_thread/src/signal.c **** {
+  49:rt_thread/src/signal.c ****     rt_thread_t tid = rt_thread_self();
+  50:rt_thread/src/signal.c **** 
+  51:rt_thread/src/signal.c ****     /* handle signal */
+  52:rt_thread/src/signal.c ****     rt_thread_handle_sig(RT_FALSE);
+  53:rt_thread/src/signal.c **** 
+  54:rt_thread/src/signal.c ****     /* return to thread */
+  55:rt_thread/src/signal.c ****     tid->sp = tid->sig_ret;
+  56:rt_thread/src/signal.c ****     tid->sig_ret = RT_NULL;
+  57:rt_thread/src/signal.c **** 
+  58:rt_thread/src/signal.c ****     LOG_D("switch back to: 0x%08x\n", tid->sp);
+  59:rt_thread/src/signal.c ****     tid->stat &= ~RT_THREAD_STAT_SIGNAL;
+  60:rt_thread/src/signal.c **** 
+  61:rt_thread/src/signal.c ****     rt_hw_context_switch_to((rt_ubase_t)&(tid->sp));
+  62:rt_thread/src/signal.c **** }
+  63:rt_thread/src/signal.c **** 
+  64:rt_thread/src/signal.c **** /*
+  65:rt_thread/src/signal.c ****  * To deliver a signal to thread, there are cases:
+  66:rt_thread/src/signal.c ****  * 1. When thread is suspended, function resumes thread and
+  67:rt_thread/src/signal.c ****  * set signal stat;
+  68:rt_thread/src/signal.c ****  * 2. When thread is ready:
+  69:rt_thread/src/signal.c ****  *   - If function delivers a signal to self thread, just handle
+  70:rt_thread/src/signal.c ****  *    it.
+  71:rt_thread/src/signal.c ****  *   - If function delivers a signal to another ready thread, OS
+  72:rt_thread/src/signal.c ****  *    should build a slice context to handle it.
+  73:rt_thread/src/signal.c ****  */
+ARM GAS  /tmp/ccmkdsNJ.s 			page 3
+
+
+  74:rt_thread/src/signal.c **** static void _signal_deliver(rt_thread_t tid)
+  75:rt_thread/src/signal.c **** {
+  76:rt_thread/src/signal.c ****     rt_ubase_t level;
+  77:rt_thread/src/signal.c **** 
+  78:rt_thread/src/signal.c ****     level = rt_hw_interrupt_disable();
+  79:rt_thread/src/signal.c **** 
+  80:rt_thread/src/signal.c ****     /* thread is not interested in pended signals */
+  81:rt_thread/src/signal.c ****     if (!(tid->sig_pending & tid->sig_mask))
+  82:rt_thread/src/signal.c ****     {
+  83:rt_thread/src/signal.c ****         rt_hw_interrupt_enable(level);
+  84:rt_thread/src/signal.c ****         return;
+  85:rt_thread/src/signal.c ****     }
+  86:rt_thread/src/signal.c **** 
+  87:rt_thread/src/signal.c ****     if ((tid->stat & RT_THREAD_STAT_MASK) == RT_THREAD_SUSPEND)
+  88:rt_thread/src/signal.c ****     {
+  89:rt_thread/src/signal.c ****         /* resume thread to handle signal */
+  90:rt_thread/src/signal.c ****         rt_thread_resume(tid);
+  91:rt_thread/src/signal.c ****         /* add signal state */
+  92:rt_thread/src/signal.c ****         tid->stat |= (RT_THREAD_STAT_SIGNAL | RT_THREAD_STAT_SIGNAL_PENDING);
+  93:rt_thread/src/signal.c **** 
+  94:rt_thread/src/signal.c ****         rt_hw_interrupt_enable(level);
+  95:rt_thread/src/signal.c **** 
+  96:rt_thread/src/signal.c ****         /* re-schedule */
+  97:rt_thread/src/signal.c ****         rt_schedule();
+  98:rt_thread/src/signal.c ****     }
+  99:rt_thread/src/signal.c ****     else
+ 100:rt_thread/src/signal.c ****     {
+ 101:rt_thread/src/signal.c ****         if (tid == rt_thread_self())
+ 102:rt_thread/src/signal.c ****         {
+ 103:rt_thread/src/signal.c ****             /* add signal state */
+ 104:rt_thread/src/signal.c ****             tid->stat |= RT_THREAD_STAT_SIGNAL;
+ 105:rt_thread/src/signal.c **** 
+ 106:rt_thread/src/signal.c ****             rt_hw_interrupt_enable(level);
+ 107:rt_thread/src/signal.c **** 
+ 108:rt_thread/src/signal.c ****             /* do signal action in self thread context */
+ 109:rt_thread/src/signal.c ****             if (rt_interrupt_get_nest() == 0)
+ 110:rt_thread/src/signal.c ****             {
+ 111:rt_thread/src/signal.c ****                 rt_thread_handle_sig(RT_TRUE);
+ 112:rt_thread/src/signal.c ****             }
+ 113:rt_thread/src/signal.c ****         }
+ 114:rt_thread/src/signal.c ****         else if (!((tid->stat & RT_THREAD_STAT_SIGNAL_MASK) & RT_THREAD_STAT_SIGNAL))
+ 115:rt_thread/src/signal.c ****         {
+ 116:rt_thread/src/signal.c ****             /* add signal state */
+ 117:rt_thread/src/signal.c ****             tid->stat |= (RT_THREAD_STAT_SIGNAL | RT_THREAD_STAT_SIGNAL_PENDING);
+ 118:rt_thread/src/signal.c **** 
+ 119:rt_thread/src/signal.c ****             /* point to the signal handle entry */
+ 120:rt_thread/src/signal.c ****             tid->stat &= ~RT_THREAD_STAT_SIGNAL_PENDING;
+ 121:rt_thread/src/signal.c ****             tid->sig_ret = tid->sp;
+ 122:rt_thread/src/signal.c ****             tid->sp = rt_hw_stack_init((void *)_signal_entry, RT_NULL,
+ 123:rt_thread/src/signal.c ****                                        (void *)((char *)tid->sig_ret - 32), RT_NULL);
+ 124:rt_thread/src/signal.c **** 
+ 125:rt_thread/src/signal.c ****             rt_hw_interrupt_enable(level);
+ 126:rt_thread/src/signal.c ****             LOG_D("signal stack pointer @ 0x%08x", tid->sp);
+ 127:rt_thread/src/signal.c **** 
+ 128:rt_thread/src/signal.c ****             /* re-schedule */
+ 129:rt_thread/src/signal.c ****             rt_schedule();
+ 130:rt_thread/src/signal.c ****         }
+ARM GAS  /tmp/ccmkdsNJ.s 			page 4
+
+
+ 131:rt_thread/src/signal.c ****         else
+ 132:rt_thread/src/signal.c ****         {
+ 133:rt_thread/src/signal.c ****             rt_hw_interrupt_enable(level);
+ 134:rt_thread/src/signal.c ****         }
+ 135:rt_thread/src/signal.c ****     }
+ 136:rt_thread/src/signal.c **** }
+ 137:rt_thread/src/signal.c **** 
+ 138:rt_thread/src/signal.c **** rt_sighandler_t rt_signal_install(int signo, rt_sighandler_t handler)
+ 139:rt_thread/src/signal.c **** {
+ 140:rt_thread/src/signal.c ****     rt_base_t level;
+ 141:rt_thread/src/signal.c ****     rt_sighandler_t old = RT_NULL;
+ 142:rt_thread/src/signal.c ****     rt_thread_t tid = rt_thread_self();
+ 143:rt_thread/src/signal.c **** 
+ 144:rt_thread/src/signal.c ****     if (!sig_valid(signo)) return SIG_ERR;
+ 145:rt_thread/src/signal.c **** 
+ 146:rt_thread/src/signal.c ****     level = rt_hw_interrupt_disable();
+ 147:rt_thread/src/signal.c ****     if (tid->sig_vectors == RT_NULL)
+ 148:rt_thread/src/signal.c ****     {
+ 149:rt_thread/src/signal.c ****         rt_thread_alloc_sig(tid);
+ 150:rt_thread/src/signal.c ****     }
+ 151:rt_thread/src/signal.c **** 
+ 152:rt_thread/src/signal.c ****     if (tid->sig_vectors)
+ 153:rt_thread/src/signal.c ****     {
+ 154:rt_thread/src/signal.c ****         old = tid->sig_vectors[signo];
+ 155:rt_thread/src/signal.c **** 
+ 156:rt_thread/src/signal.c ****         if (handler == SIG_IGN) tid->sig_vectors[signo] = RT_NULL;
+ 157:rt_thread/src/signal.c ****         else if (handler == SIG_DFL) tid->sig_vectors[signo] = _signal_default_handler;
+ 158:rt_thread/src/signal.c ****         else tid->sig_vectors[signo] = handler;
+ 159:rt_thread/src/signal.c ****     }
+ 160:rt_thread/src/signal.c ****     rt_hw_interrupt_enable(level);
+ 161:rt_thread/src/signal.c **** 
+ 162:rt_thread/src/signal.c ****     return old;
+ 163:rt_thread/src/signal.c **** }
+ 164:rt_thread/src/signal.c **** 
+ 165:rt_thread/src/signal.c **** void rt_signal_mask(int signo)
+ 166:rt_thread/src/signal.c **** {
+  45              		.loc 1 166 0
+  46              		.cfi_startproc
+  47              		@ args = 0, pretend = 0, frame = 0
+  48              		@ frame_needed = 0, uses_anonymous_args = 0
+  49              	.LVL1:
+  50              		.loc 1 166 0
+  51 0000 38B5     		push	{r3, r4, r5, lr}
+  52              	.LCFI0:
+  53              		.cfi_def_cfa_offset 16
+  54              		.cfi_offset 3, -16
+  55              		.cfi_offset 4, -12
+  56              		.cfi_offset 5, -8
+  57              		.cfi_offset 14, -4
+  58 0002 0546     		mov	r5, r0
+ 167:rt_thread/src/signal.c ****     rt_base_t level;
+ 168:rt_thread/src/signal.c ****     rt_thread_t tid = rt_thread_self();
+  59              		.loc 1 168 0
+  60 0004 FFF7FEFF 		bl	rt_thread_self
+  61              	.LVL2:
+  62 0008 0446     		mov	r4, r0
+  63              	.LVL3:
+ARM GAS  /tmp/ccmkdsNJ.s 			page 5
+
+
+ 169:rt_thread/src/signal.c **** 
+ 170:rt_thread/src/signal.c ****     level = rt_hw_interrupt_disable();
+  64              		.loc 1 170 0
+  65 000a FFF7FEFF 		bl	rt_hw_interrupt_disable
+  66              	.LVL4:
+ 171:rt_thread/src/signal.c **** 
+ 172:rt_thread/src/signal.c ****     tid->sig_mask &= ~sig_mask(signo);
+  67              		.loc 1 172 0
+  68 000e 0123     		movs	r3, #1
+  69 0010 03FA05F2 		lsl	r2, r3, r5
+  70 0014 A36C     		ldr	r3, [r4, #72]
+  71 0016 23EA0203 		bic	r3, r3, r2
+  72 001a A364     		str	r3, [r4, #72]
+ 173:rt_thread/src/signal.c **** 
+ 174:rt_thread/src/signal.c ****     rt_hw_interrupt_enable(level);
+  73              		.loc 1 174 0
+  74 001c FFF7FEFF 		bl	rt_hw_interrupt_enable
+  75              	.LVL5:
+  76 0020 38BD     		pop	{r3, r4, r5, pc}
+  77              		.cfi_endproc
+  78              	.LFE19:
+  80 0022 00BF     		.section	.text.rt_signal_wait,"ax",%progbits
+  81              		.align	2
+  82              		.global	rt_signal_wait
+  83              		.thumb
+  84              		.thumb_func
+  86              	rt_signal_wait:
+  87              	.LFB21:
+ 175:rt_thread/src/signal.c **** }
+ 176:rt_thread/src/signal.c **** 
+ 177:rt_thread/src/signal.c **** void rt_signal_unmask(int signo)
+ 178:rt_thread/src/signal.c **** {
+ 179:rt_thread/src/signal.c ****     rt_base_t level;
+ 180:rt_thread/src/signal.c ****     rt_thread_t tid = rt_thread_self();
+ 181:rt_thread/src/signal.c **** 
+ 182:rt_thread/src/signal.c ****     level = rt_hw_interrupt_disable();
+ 183:rt_thread/src/signal.c **** 
+ 184:rt_thread/src/signal.c ****     tid->sig_mask |= sig_mask(signo);
+ 185:rt_thread/src/signal.c **** 
+ 186:rt_thread/src/signal.c ****     /* let thread handle pended signals */
+ 187:rt_thread/src/signal.c ****     if (tid->sig_mask & tid->sig_pending)
+ 188:rt_thread/src/signal.c ****     {
+ 189:rt_thread/src/signal.c ****         rt_hw_interrupt_enable(level);
+ 190:rt_thread/src/signal.c ****         _signal_deliver(tid);
+ 191:rt_thread/src/signal.c ****     }
+ 192:rt_thread/src/signal.c ****     else
+ 193:rt_thread/src/signal.c ****     {
+ 194:rt_thread/src/signal.c ****         rt_hw_interrupt_enable(level);
+ 195:rt_thread/src/signal.c ****     }
+ 196:rt_thread/src/signal.c **** }
+ 197:rt_thread/src/signal.c **** 
+ 198:rt_thread/src/signal.c **** int rt_signal_wait(const rt_sigset_t *set, rt_siginfo_t *si, rt_int32_t timeout)
+ 199:rt_thread/src/signal.c **** {
+  88              		.loc 1 199 0
+  89              		.cfi_startproc
+  90              		@ args = 0, pretend = 0, frame = 8
+  91              		@ frame_needed = 0, uses_anonymous_args = 0
+ARM GAS  /tmp/ccmkdsNJ.s 			page 6
+
+
+  92              	.LVL6:
+  93 0000 2DE9F043 		push	{r4, r5, r6, r7, r8, r9, lr}
+  94              	.LCFI1:
+  95              		.cfi_def_cfa_offset 28
+  96              		.cfi_offset 4, -28
+  97              		.cfi_offset 5, -24
+  98              		.cfi_offset 6, -20
+  99              		.cfi_offset 7, -16
+ 100              		.cfi_offset 8, -12
+ 101              		.cfi_offset 9, -8
+ 102              		.cfi_offset 14, -4
+ 103 0004 83B0     		sub	sp, sp, #12
+ 104              	.LCFI2:
+ 105              		.cfi_def_cfa_offset 40
+ 106 0006 0446     		mov	r4, r0
+ 107 0008 0D46     		mov	r5, r1
+ 108 000a 0192     		str	r2, [sp, #4]
+ 109              	.LVL7:
+ 200:rt_thread/src/signal.c ****     int ret = RT_EOK;
+ 201:rt_thread/src/signal.c ****     rt_base_t   level;
+ 202:rt_thread/src/signal.c ****     rt_thread_t tid = rt_thread_self();
+ 110              		.loc 1 202 0
+ 111 000c FFF7FEFF 		bl	rt_thread_self
+ 112              	.LVL8:
+ 113 0010 0646     		mov	r6, r0
+ 114              	.LVL9:
+ 115              	.LBB8:
+ 203:rt_thread/src/signal.c ****     struct siginfo_node *si_node = RT_NULL, *si_prev = RT_NULL;
+ 204:rt_thread/src/signal.c **** 
+ 205:rt_thread/src/signal.c ****     /* current context checking */
+ 206:rt_thread/src/signal.c ****     RT_DEBUG_IN_THREAD_CONTEXT;
+ 116              		.loc 1 206 0
+ 117 0012 FFF7FEFF 		bl	rt_hw_interrupt_disable
+ 118              	.LVL10:
+ 119 0016 0746     		mov	r7, r0
+ 120              	.LVL11:
+ 121 0018 FFF7FEFF 		bl	rt_thread_self
+ 122              	.LVL12:
+ 123 001c 50B9     		cbnz	r0, .L5
+ 124              		.loc 1 206 0 is_stmt 0 discriminator 1
+ 125 001e DFF85C81 		ldr	r8, .L24+12
+ 126 0022 4146     		mov	r1, r8
+ 127 0024 5248     		ldr	r0, .L24
+ 128 0026 FFF7FEFF 		bl	rt_kprintf
+ 129              	.LVL13:
+ 130 002a CE22     		movs	r2, #206
+ 131 002c 4146     		mov	r1, r8
+ 132 002e 5148     		ldr	r0, .L24+4
+ 133 0030 FFF7FEFF 		bl	rt_assert_handler
+ 134              	.LVL14:
+ 135              	.L5:
+ 136              	.LBB9:
+ 137              		.loc 1 206 0 discriminator 5
+ 138 0034 FFF7FEFF 		bl	rt_hw_interrupt_disable
+ 139              	.LVL15:
+ 140 0038 8046     		mov	r8, r0
+ 141              	.LVL16:
+ARM GAS  /tmp/ccmkdsNJ.s 			page 7
+
+
+ 142 003a FFF7FEFF 		bl	rt_interrupt_get_nest
+ 143              	.LVL17:
+ 144 003e 50B1     		cbz	r0, .L6
+ 145              		.loc 1 206 0 discriminator 6
+ 146 0040 DFF83891 		ldr	r9, .L24+12
+ 147 0044 4946     		mov	r1, r9
+ 148 0046 4C48     		ldr	r0, .L24+8
+ 149 0048 FFF7FEFF 		bl	rt_kprintf
+ 150              	.LVL18:
+ 151 004c CE22     		movs	r2, #206
+ 152 004e 4946     		mov	r1, r9
+ 153 0050 4848     		ldr	r0, .L24+4
+ 154 0052 FFF7FEFF 		bl	rt_assert_handler
+ 155              	.LVL19:
+ 156              	.L6:
+ 157              		.loc 1 206 0 discriminator 10
+ 158 0056 4046     		mov	r0, r8
+ 159 0058 FFF7FEFF 		bl	rt_hw_interrupt_enable
+ 160              	.LVL20:
+ 161              	.LBE9:
+ 162 005c 3846     		mov	r0, r7
+ 163 005e FFF7FEFF 		bl	rt_hw_interrupt_enable
+ 164              	.LVL21:
+ 165              	.LBE8:
+ 207:rt_thread/src/signal.c **** 
+ 208:rt_thread/src/signal.c ****     /* parameters check */
+ 209:rt_thread/src/signal.c ****     if (set == NULL || *set == 0 || si == NULL )
+ 166              		.loc 1 209 0 is_stmt 1 discriminator 10
+ 167 0062 002C     		cmp	r4, #0
+ 168 0064 78D0     		beq	.L18
+ 169              		.loc 1 209 0 is_stmt 0 discriminator 1
+ 170 0066 2368     		ldr	r3, [r4]
+ 171 0068 002B     		cmp	r3, #0
+ 172 006a 78D0     		beq	.L19
+ 173              		.loc 1 209 0 discriminator 2
+ 174 006c 002D     		cmp	r5, #0
+ 175 006e 79D0     		beq	.L20
+ 210:rt_thread/src/signal.c ****     {
+ 211:rt_thread/src/signal.c ****         ret = -RT_EINVAL;
+ 212:rt_thread/src/signal.c ****         goto __done_return;
+ 213:rt_thread/src/signal.c ****     }
+ 214:rt_thread/src/signal.c **** 
+ 215:rt_thread/src/signal.c ****     /* clear siginfo to avoid unknown value */
+ 216:rt_thread/src/signal.c ****     memset(si, 0x0, sizeof(rt_siginfo_t));
+ 176              		.loc 1 216 0 is_stmt 1
+ 177 0070 0023     		movs	r3, #0
+ 178 0072 2B60     		str	r3, [r5]	@ unaligned
+ 179 0074 6B60     		str	r3, [r5, #4]	@ unaligned
+ 217:rt_thread/src/signal.c **** 
+ 218:rt_thread/src/signal.c ****     level = rt_hw_interrupt_disable();
+ 180              		.loc 1 218 0
+ 181 0076 FFF7FEFF 		bl	rt_hw_interrupt_disable
+ 182              	.LVL22:
+ 183 007a 0746     		mov	r7, r0
+ 184              	.LVL23:
+ 219:rt_thread/src/signal.c **** 
+ 220:rt_thread/src/signal.c ****     /* already pending */
+ARM GAS  /tmp/ccmkdsNJ.s 			page 8
+
+
+ 221:rt_thread/src/signal.c ****     if (tid->sig_pending & *set) goto __done;
+ 185              		.loc 1 221 0
+ 186 007c 726C     		ldr	r2, [r6, #68]
+ 187 007e 2368     		ldr	r3, [r4]
+ 188 0080 1A42     		tst	r2, r3
+ 189 0082 32D1     		bne	.L8
+ 222:rt_thread/src/signal.c **** 
+ 223:rt_thread/src/signal.c ****     if (timeout == 0)
+ 190              		.loc 1 223 0
+ 191 0084 019B     		ldr	r3, [sp, #4]
+ 192 0086 002B     		cmp	r3, #0
+ 193 0088 60D0     		beq	.L21
+ 224:rt_thread/src/signal.c ****     {
+ 225:rt_thread/src/signal.c ****         ret = -RT_ETIMEOUT;
+ 226:rt_thread/src/signal.c ****         goto __done_int;
+ 227:rt_thread/src/signal.c ****     }
+ 228:rt_thread/src/signal.c **** 
+ 229:rt_thread/src/signal.c ****     /* suspend self thread */
+ 230:rt_thread/src/signal.c ****     rt_thread_suspend(tid);
+ 194              		.loc 1 230 0
+ 195 008a 3046     		mov	r0, r6
+ 196              	.LVL24:
+ 197 008c FFF7FEFF 		bl	rt_thread_suspend
+ 198              	.LVL25:
+ 231:rt_thread/src/signal.c ****     /* set thread stat as waiting for signal */
+ 232:rt_thread/src/signal.c ****     tid->stat |= RT_THREAD_STAT_SIGNAL_WAIT;
+ 199              		.loc 1 232 0
+ 200 0090 96F83430 		ldrb	r3, [r6, #52]	@ zero_extendqisi2
+ 201 0094 43F02003 		orr	r3, r3, #32
+ 202 0098 86F83430 		strb	r3, [r6, #52]
+ 233:rt_thread/src/signal.c **** 
+ 234:rt_thread/src/signal.c ****     /* start timeout timer */
+ 235:rt_thread/src/signal.c ****     if (timeout != RT_WAITING_FOREVER)
+ 203              		.loc 1 235 0
+ 204 009c 019B     		ldr	r3, [sp, #4]
+ 205 009e B3F1FF3F 		cmp	r3, #-1
+ 206 00a2 09D0     		beq	.L10
+ 236:rt_thread/src/signal.c ****     {
+ 237:rt_thread/src/signal.c ****         /* reset the timeout of thread timer and start it */
+ 238:rt_thread/src/signal.c ****         rt_timer_control(&(tid->thread_timer),
+ 207              		.loc 1 238 0
+ 208 00a4 06F16008 		add	r8, r6, #96
+ 209              	.LVL26:
+ 210 00a8 01AA     		add	r2, sp, #4
+ 211              	.LVL27:
+ 212 00aa 0021     		movs	r1, #0
+ 213 00ac 4046     		mov	r0, r8
+ 214 00ae FFF7FEFF 		bl	rt_timer_control
+ 215              	.LVL28:
+ 239:rt_thread/src/signal.c ****                          RT_TIMER_CTRL_SET_TIME,
+ 240:rt_thread/src/signal.c ****                          &timeout);
+ 241:rt_thread/src/signal.c ****         rt_timer_start(&(tid->thread_timer));
+ 216              		.loc 1 241 0
+ 217 00b2 4046     		mov	r0, r8
+ 218 00b4 FFF7FEFF 		bl	rt_timer_start
+ 219              	.LVL29:
+ 220              	.L10:
+ARM GAS  /tmp/ccmkdsNJ.s 			page 9
+
+
+ 242:rt_thread/src/signal.c ****     }
+ 243:rt_thread/src/signal.c ****     rt_hw_interrupt_enable(level);
+ 221              		.loc 1 243 0
+ 222 00b8 3846     		mov	r0, r7
+ 223 00ba FFF7FEFF 		bl	rt_hw_interrupt_enable
+ 224              	.LVL30:
+ 244:rt_thread/src/signal.c **** 
+ 245:rt_thread/src/signal.c ****     /* do thread scheduling */
+ 246:rt_thread/src/signal.c ****     rt_schedule();
+ 225              		.loc 1 246 0
+ 226 00be FFF7FEFF 		bl	rt_schedule
+ 227              	.LVL31:
+ 247:rt_thread/src/signal.c **** 
+ 248:rt_thread/src/signal.c ****     level = rt_hw_interrupt_disable();
+ 228              		.loc 1 248 0
+ 229 00c2 FFF7FEFF 		bl	rt_hw_interrupt_disable
+ 230              	.LVL32:
+ 231 00c6 0746     		mov	r7, r0
+ 232              	.LVL33:
+ 249:rt_thread/src/signal.c **** 
+ 250:rt_thread/src/signal.c ****     /* remove signal waiting flag */
+ 251:rt_thread/src/signal.c ****     tid->stat &= ~RT_THREAD_STAT_SIGNAL_WAIT;
+ 233              		.loc 1 251 0
+ 234 00c8 96F83430 		ldrb	r3, [r6, #52]	@ zero_extendqisi2
+ 235 00cc 23F02003 		bic	r3, r3, #32
+ 236 00d0 86F83430 		strb	r3, [r6, #52]
+ 252:rt_thread/src/signal.c **** 
+ 253:rt_thread/src/signal.c ****     /* check errno of thread */
+ 254:rt_thread/src/signal.c ****     if (tid->error == -RT_ETIMEOUT)
+ 237              		.loc 1 254 0
+ 238 00d4 336B     		ldr	r3, [r6, #48]
+ 239 00d6 13F1020F 		cmn	r3, #2
+ 240 00da 06D1     		bne	.L8
+ 255:rt_thread/src/signal.c ****     {
+ 256:rt_thread/src/signal.c ****         tid->error = RT_EOK;
+ 241              		.loc 1 256 0
+ 242 00dc 0023     		movs	r3, #0
+ 243 00de 3363     		str	r3, [r6, #48]
+ 257:rt_thread/src/signal.c ****         rt_hw_interrupt_enable(level);
+ 244              		.loc 1 257 0
+ 245 00e0 FFF7FEFF 		bl	rt_hw_interrupt_enable
+ 246              	.LVL34:
+ 258:rt_thread/src/signal.c **** 
+ 259:rt_thread/src/signal.c ****         /* timer timeout */
+ 260:rt_thread/src/signal.c ****         ret = -RT_ETIMEOUT;
+ 247              		.loc 1 260 0
+ 248 00e4 6FF00104 		mvn	r4, #1
+ 249              	.LVL35:
+ 261:rt_thread/src/signal.c ****         goto __done_return;
+ 250              		.loc 1 261 0
+ 251 00e8 3EE0     		b	.L7
+ 252              	.LVL36:
+ 253              	.L8:
+ 262:rt_thread/src/signal.c ****     }
+ 263:rt_thread/src/signal.c **** 
+ 264:rt_thread/src/signal.c **** __done:
+ 265:rt_thread/src/signal.c ****     /* to get the first matched pending signals */
+ARM GAS  /tmp/ccmkdsNJ.s 			page 10
+
+
+ 266:rt_thread/src/signal.c ****     si_node = (struct siginfo_node *)tid->si_list;
+ 254              		.loc 1 266 0
+ 255 00ea 736D     		ldr	r3, [r6, #84]
+ 256              	.LVL37:
+ 203:rt_thread/src/signal.c **** 
+ 257              		.loc 1 203 0
+ 258 00ec 4FF0000E 		mov	lr, #0
+ 267:rt_thread/src/signal.c ****     while (si_node)
+ 259              		.loc 1 267 0
+ 260 00f0 28E0     		b	.L11
+ 261              	.LVL38:
+ 262              	.L17:
+ 263              	.LBB10:
+ 268:rt_thread/src/signal.c ****     {
+ 269:rt_thread/src/signal.c ****         int signo;
+ 270:rt_thread/src/signal.c **** 
+ 271:rt_thread/src/signal.c ****         signo = si_node->si.si_signo;
+ 264              		.loc 1 271 0
+ 265 00f2 1A88     		ldrh	r2, [r3]
+ 266              	.LVL39:
+ 272:rt_thread/src/signal.c ****         if (sig_mask(signo) & *set)
+ 267              		.loc 1 272 0
+ 268 00f4 0121     		movs	r1, #1
+ 269 00f6 01FA02F2 		lsl	r2, r1, r2
+ 270              	.LVL40:
+ 271 00fa 2168     		ldr	r1, [r4]
+ 272 00fc 0A42     		tst	r2, r1
+ 273 00fe 1AD0     		beq	.L12
+ 273:rt_thread/src/signal.c ****         {
+ 274:rt_thread/src/signal.c ****             *si  = si_node->si;
+ 274              		.loc 1 274 0
+ 275 0100 93E80300 		ldmia	r3, {r0, r1}
+ 276              	.LVL41:
+ 277 0104 85E80300 		stmia	r5, {r0, r1}
+ 278              	.LVL42:
+ 275:rt_thread/src/signal.c **** 
+ 276:rt_thread/src/signal.c ****             LOG_D("sigwait: %d sig raised!", signo);
+ 277:rt_thread/src/signal.c ****             if (si_prev) si_prev->list.next = si_node->list.next;
+ 279              		.loc 1 277 0
+ 280 0108 BEF1000F 		cmp	lr, #0
+ 281 010c 03D0     		beq	.L13
+ 282              		.loc 1 277 0 is_stmt 0 discriminator 1
+ 283 010e 9968     		ldr	r1, [r3, #8]
+ 284 0110 CEF80810 		str	r1, [lr, #8]
+ 285 0114 06E0     		b	.L14
+ 286              	.L13:
+ 287              	.LBB11:
+ 278:rt_thread/src/signal.c ****             else
+ 279:rt_thread/src/signal.c ****             {
+ 280:rt_thread/src/signal.c ****                 struct siginfo_node *node_next;
+ 281:rt_thread/src/signal.c **** 
+ 282:rt_thread/src/signal.c ****                 if (si_node->list.next)
+ 288              		.loc 1 282 0 is_stmt 1
+ 289 0116 9968     		ldr	r1, [r3, #8]
+ 290 0118 11B1     		cbz	r1, .L15
+ 283:rt_thread/src/signal.c ****                 {
+ 284:rt_thread/src/signal.c ****                     node_next = (void *)rt_slist_entry(si_node->list.next, struct siginfo_node, lis
+ARM GAS  /tmp/ccmkdsNJ.s 			page 11
+
+
+ 291              		.loc 1 284 0
+ 292 011a 0839     		subs	r1, r1, #8
+ 293              	.LVL43:
+ 285:rt_thread/src/signal.c ****                     tid->si_list = node_next;
+ 294              		.loc 1 285 0
+ 295 011c 7165     		str	r1, [r6, #84]
+ 296 011e 01E0     		b	.L14
+ 297              	.LVL44:
+ 298              	.L15:
+ 286:rt_thread/src/signal.c ****                 }
+ 287:rt_thread/src/signal.c ****                 else
+ 288:rt_thread/src/signal.c ****                 {
+ 289:rt_thread/src/signal.c ****                     tid->si_list = RT_NULL;
+ 299              		.loc 1 289 0
+ 300 0120 0021     		movs	r1, #0
+ 301 0122 7165     		str	r1, [r6, #84]
+ 302              	.L14:
+ 303              	.LBE11:
+ 290:rt_thread/src/signal.c ****                 }
+ 291:rt_thread/src/signal.c ****             }
+ 292:rt_thread/src/signal.c **** 
+ 293:rt_thread/src/signal.c ****             /* clear pending */
+ 294:rt_thread/src/signal.c ****             tid->sig_pending &= ~sig_mask(signo);
+ 304              		.loc 1 294 0
+ 305 0124 716C     		ldr	r1, [r6, #68]
+ 306 0126 21EA0202 		bic	r2, r1, r2
+ 307 012a 7264     		str	r2, [r6, #68]
+ 295:rt_thread/src/signal.c ****             rt_mp_free(si_node);
+ 308              		.loc 1 295 0
+ 309 012c 1846     		mov	r0, r3
+ 310 012e FFF7FEFF 		bl	rt_mp_free
+ 311              	.LVL45:
+ 312              	.LBE10:
+ 200:rt_thread/src/signal.c ****     rt_base_t   level;
+ 313              		.loc 1 200 0
+ 314 0132 0024     		movs	r4, #0
+ 315              	.LVL46:
+ 316              	.LBB12:
+ 296:rt_thread/src/signal.c ****             break;
+ 317              		.loc 1 296 0
+ 318 0134 0CE0     		b	.L9
+ 319              	.LVL47:
+ 320              	.L12:
+ 297:rt_thread/src/signal.c ****         }
+ 298:rt_thread/src/signal.c **** 
+ 299:rt_thread/src/signal.c ****         si_prev = si_node;
+ 300:rt_thread/src/signal.c ****         if (si_node->list.next)
+ 321              		.loc 1 300 0
+ 322 0136 9A68     		ldr	r2, [r3, #8]
+ 323 0138 0AB1     		cbz	r2, .L22
+ 301:rt_thread/src/signal.c ****         {
+ 302:rt_thread/src/signal.c ****             si_node = (void *)rt_slist_entry(si_node->list.next, struct siginfo_node, list);
+ 324              		.loc 1 302 0
+ 325 013a 083A     		subs	r2, r2, #8
+ 326              	.LVL48:
+ 327 013c 00E0     		b	.L16
+ 328              	.LVL49:
+ARM GAS  /tmp/ccmkdsNJ.s 			page 12
+
+
+ 329              	.L22:
+ 303:rt_thread/src/signal.c ****         }
+ 304:rt_thread/src/signal.c ****         else
+ 305:rt_thread/src/signal.c ****         {
+ 306:rt_thread/src/signal.c ****             si_node = RT_NULL;
+ 330              		.loc 1 306 0
+ 331 013e 0022     		movs	r2, #0
+ 332              	.LVL50:
+ 333              	.L16:
+ 334 0140 9E46     		mov	lr, r3
+ 335 0142 1346     		mov	r3, r2
+ 336              	.LVL51:
+ 337              	.L11:
+ 338              	.LBE12:
+ 267:rt_thread/src/signal.c ****     {
+ 339              		.loc 1 267 0
+ 340 0144 002B     		cmp	r3, #0
+ 341 0146 D4D1     		bne	.L17
+ 200:rt_thread/src/signal.c ****     rt_base_t   level;
+ 342              		.loc 1 200 0
+ 343 0148 0024     		movs	r4, #0
+ 344              	.LVL52:
+ 345 014a 01E0     		b	.L9
+ 346              	.LVL53:
+ 347              	.L21:
+ 225:rt_thread/src/signal.c ****         goto __done_int;
+ 348              		.loc 1 225 0
+ 349 014c 6FF00104 		mvn	r4, #1
+ 350              	.LVL54:
+ 351              	.L9:
+ 307:rt_thread/src/signal.c ****         }
+ 308:rt_thread/src/signal.c ****      }
+ 309:rt_thread/src/signal.c **** 
+ 310:rt_thread/src/signal.c **** __done_int:
+ 311:rt_thread/src/signal.c ****     rt_hw_interrupt_enable(level);
+ 352              		.loc 1 311 0
+ 353 0150 3846     		mov	r0, r7
+ 354 0152 FFF7FEFF 		bl	rt_hw_interrupt_enable
+ 355              	.LVL55:
+ 356 0156 07E0     		b	.L7
+ 357              	.LVL56:
+ 358              	.L18:
+ 211:rt_thread/src/signal.c ****         goto __done_return;
+ 359              		.loc 1 211 0
+ 360 0158 6FF00904 		mvn	r4, #9
+ 361              	.LVL57:
+ 362 015c 04E0     		b	.L7
+ 363              	.LVL58:
+ 364              	.L19:
+ 365 015e 6FF00904 		mvn	r4, #9
+ 366              	.LVL59:
+ 367 0162 01E0     		b	.L7
+ 368              	.LVL60:
+ 369              	.L20:
+ 370 0164 6FF00904 		mvn	r4, #9
+ 371              	.LVL61:
+ 372              	.L7:
+ARM GAS  /tmp/ccmkdsNJ.s 			page 13
+
+
+ 312:rt_thread/src/signal.c **** 
+ 313:rt_thread/src/signal.c **** __done_return:
+ 314:rt_thread/src/signal.c ****     return ret;
+ 315:rt_thread/src/signal.c **** }
+ 373              		.loc 1 315 0
+ 374 0168 2046     		mov	r0, r4
+ 375 016a 03B0     		add	sp, sp, #12
+ 376              	.LCFI3:
+ 377              		.cfi_def_cfa_offset 28
+ 378              		@ sp needed
+ 379 016c BDE8F083 		pop	{r4, r5, r6, r7, r8, r9, pc}
+ 380              	.LVL62:
+ 381              	.L25:
+ 382              		.align	2
+ 383              	.L24:
+ 384 0170 00000000 		.word	.LC0
+ 385 0174 38000000 		.word	.LC1
+ 386 0178 3C000000 		.word	.LC2
+ 387 017c 00000000 		.word	.LANCHOR0
+ 388              		.cfi_endproc
+ 389              	.LFE21:
+ 391              		.section	.text.rt_thread_handle_sig,"ax",%progbits
+ 392              		.align	2
+ 393              		.global	rt_thread_handle_sig
+ 394              		.thumb
+ 395              		.thumb_func
+ 397              	rt_thread_handle_sig:
+ 398              	.LFB22:
+ 316:rt_thread/src/signal.c **** 
+ 317:rt_thread/src/signal.c **** void rt_thread_handle_sig(rt_bool_t clean_state)
+ 318:rt_thread/src/signal.c **** {
+ 399              		.loc 1 318 0
+ 400              		.cfi_startproc
+ 401              		@ args = 0, pretend = 0, frame = 0
+ 402              		@ frame_needed = 0, uses_anonymous_args = 0
+ 403              	.LVL63:
+ 404 0000 2DE9F843 		push	{r3, r4, r5, r6, r7, r8, r9, lr}
+ 405              	.LCFI4:
+ 406              		.cfi_def_cfa_offset 32
+ 407              		.cfi_offset 3, -32
+ 408              		.cfi_offset 4, -28
+ 409              		.cfi_offset 5, -24
+ 410              		.cfi_offset 6, -20
+ 411              		.cfi_offset 7, -16
+ 412              		.cfi_offset 8, -12
+ 413              		.cfi_offset 9, -8
+ 414              		.cfi_offset 14, -4
+ 415 0004 8146     		mov	r9, r0
+ 319:rt_thread/src/signal.c ****     rt_base_t level;
+ 320:rt_thread/src/signal.c **** 
+ 321:rt_thread/src/signal.c ****     rt_thread_t tid = rt_thread_self();
+ 416              		.loc 1 321 0
+ 417 0006 FFF7FEFF 		bl	rt_thread_self
+ 418              	.LVL64:
+ 419 000a 0446     		mov	r4, r0
+ 420              	.LVL65:
+ 322:rt_thread/src/signal.c ****     struct siginfo_node *si_node;
+ARM GAS  /tmp/ccmkdsNJ.s 			page 14
+
+
+ 323:rt_thread/src/signal.c **** 
+ 324:rt_thread/src/signal.c ****     level = rt_hw_interrupt_disable();
+ 421              		.loc 1 324 0
+ 422 000c FFF7FEFF 		bl	rt_hw_interrupt_disable
+ 423              	.LVL66:
+ 424 0010 0646     		mov	r6, r0
+ 425              	.LVL67:
+ 325:rt_thread/src/signal.c ****     if (tid->sig_pending & tid->sig_mask)
+ 426              		.loc 1 325 0
+ 427 0012 626C     		ldr	r2, [r4, #68]
+ 428 0014 A36C     		ldr	r3, [r4, #72]
+ 429 0016 1A42     		tst	r2, r3
+ 430 0018 34D0     		beq	.L27
+ 326:rt_thread/src/signal.c ****     {
+ 327:rt_thread/src/signal.c ****         /* if thread is not waiting for signal */
+ 328:rt_thread/src/signal.c ****         if (!(tid->stat & RT_THREAD_STAT_SIGNAL_WAIT))
+ 431              		.loc 1 328 0
+ 432 001a 94F83430 		ldrb	r3, [r4, #52]	@ zero_extendqisi2
+ 433 001e 13F0200F 		tst	r3, #32
+ 434 0022 22D0     		beq	.L28
+ 435 0024 2EE0     		b	.L27
+ 436              	.LVL68:
+ 437              	.L33:
+ 438              	.LBB13:
+ 329:rt_thread/src/signal.c ****         {
+ 330:rt_thread/src/signal.c ****             while (tid->sig_pending & tid->sig_mask)
+ 331:rt_thread/src/signal.c ****             {
+ 332:rt_thread/src/signal.c ****                 int signo, error;
+ 333:rt_thread/src/signal.c ****                 rt_sighandler_t handler;
+ 334:rt_thread/src/signal.c **** 
+ 335:rt_thread/src/signal.c ****                 si_node = (struct siginfo_node *)tid->si_list;
+ 439              		.loc 1 335 0
+ 440 0026 656D     		ldr	r5, [r4, #84]
+ 441              	.LVL69:
+ 336:rt_thread/src/signal.c ****                 if (!si_node) break;
+ 442              		.loc 1 336 0
+ 443 0028 1DB3     		cbz	r5, .L29
+ 337:rt_thread/src/signal.c **** 
+ 338:rt_thread/src/signal.c ****                 /* remove this sig info node from list */
+ 339:rt_thread/src/signal.c ****                 if (si_node->list.next == RT_NULL)
+ 444              		.loc 1 339 0
+ 445 002a AA68     		ldr	r2, [r5, #8]
+ 446 002c 0AB9     		cbnz	r2, .L30
+ 340:rt_thread/src/signal.c ****                     tid->si_list = RT_NULL;
+ 447              		.loc 1 340 0
+ 448 002e 6265     		str	r2, [r4, #84]
+ 449 0030 01E0     		b	.L31
+ 450              	.L30:
+ 341:rt_thread/src/signal.c ****                 else
+ 342:rt_thread/src/signal.c ****                     tid->si_list = (void *)rt_slist_entry(si_node->list.next, struct siginfo_node, 
+ 451              		.loc 1 342 0
+ 452 0032 083A     		subs	r2, r2, #8
+ 453 0034 6265     		str	r2, [r4, #84]
+ 454              	.L31:
+ 343:rt_thread/src/signal.c **** 
+ 344:rt_thread/src/signal.c ****                 signo   = si_node->si.si_signo;
+ 455              		.loc 1 344 0
+ARM GAS  /tmp/ccmkdsNJ.s 			page 15
+
+
+ 456 0036 B5F80080 		ldrh	r8, [r5]
+ 457              	.LVL70:
+ 345:rt_thread/src/signal.c ****                 handler = tid->sig_vectors[signo];
+ 458              		.loc 1 345 0
+ 459 003a 226D     		ldr	r2, [r4, #80]
+ 460 003c 52F82870 		ldr	r7, [r2, r8, lsl #2]
+ 461              	.LVL71:
+ 346:rt_thread/src/signal.c ****                 tid->sig_pending &= ~sig_mask(signo);
+ 462              		.loc 1 346 0
+ 463 0040 0122     		movs	r2, #1
+ 464 0042 02FA08F2 		lsl	r2, r2, r8
+ 465 0046 23EA0203 		bic	r3, r3, r2
+ 466 004a 6364     		str	r3, [r4, #68]
+ 347:rt_thread/src/signal.c ****                 rt_hw_interrupt_enable(level);
+ 467              		.loc 1 347 0
+ 468 004c 3046     		mov	r0, r6
+ 469 004e FFF7FEFF 		bl	rt_hw_interrupt_enable
+ 470              	.LVL72:
+ 348:rt_thread/src/signal.c **** 
+ 349:rt_thread/src/signal.c ****                 LOG_D("handle signal: %d, handler 0x%08x", signo, handler);
+ 350:rt_thread/src/signal.c ****                 if (handler) handler(signo);
+ 471              		.loc 1 350 0
+ 472 0052 0FB1     		cbz	r7, .L32
+ 473              		.loc 1 350 0 is_stmt 0 discriminator 1
+ 474 0054 4046     		mov	r0, r8
+ 475 0056 B847     		blx	r7
+ 476              	.LVL73:
+ 477              	.L32:
+ 351:rt_thread/src/signal.c **** 
+ 352:rt_thread/src/signal.c ****                 level = rt_hw_interrupt_disable();
+ 478              		.loc 1 352 0 is_stmt 1
+ 479 0058 FFF7FEFF 		bl	rt_hw_interrupt_disable
+ 480              	.LVL74:
+ 481 005c 0646     		mov	r6, r0
+ 482              	.LVL75:
+ 353:rt_thread/src/signal.c ****                 error = -RT_EINTR;
+ 354:rt_thread/src/signal.c **** 
+ 355:rt_thread/src/signal.c ****                 rt_mp_free(si_node); /* release this siginfo node */
+ 483              		.loc 1 355 0
+ 484 005e 2846     		mov	r0, r5
+ 485              	.LVL76:
+ 486 0060 FFF7FEFF 		bl	rt_mp_free
+ 487              	.LVL77:
+ 356:rt_thread/src/signal.c ****                 /* set errno in thread tcb */
+ 357:rt_thread/src/signal.c ****                 tid->error = error;
+ 488              		.loc 1 357 0
+ 489 0064 6FF00803 		mvn	r3, #8
+ 490 0068 2363     		str	r3, [r4, #48]
+ 491              	.LVL78:
+ 492              	.L28:
+ 493              	.LBE13:
+ 330:rt_thread/src/signal.c ****             {
+ 494              		.loc 1 330 0
+ 495 006a 636C     		ldr	r3, [r4, #68]
+ 496 006c A26C     		ldr	r2, [r4, #72]
+ 497 006e 1342     		tst	r3, r2
+ 498 0070 D9D1     		bne	.L33
+ARM GAS  /tmp/ccmkdsNJ.s 			page 16
+
+
+ 499              	.L29:
+ 358:rt_thread/src/signal.c ****             }
+ 359:rt_thread/src/signal.c **** 
+ 360:rt_thread/src/signal.c ****             /* whether clean signal status */
+ 361:rt_thread/src/signal.c ****             if (clean_state == RT_TRUE)
+ 500              		.loc 1 361 0
+ 501 0072 B9F1010F 		cmp	r9, #1
+ 502 0076 08D1     		bne	.L26
+ 362:rt_thread/src/signal.c ****             {
+ 363:rt_thread/src/signal.c ****                 tid->stat &= ~RT_THREAD_STAT_SIGNAL;
+ 503              		.loc 1 363 0
+ 504 0078 94F83430 		ldrb	r3, [r4, #52]	@ zero_extendqisi2
+ 505 007c 23F01003 		bic	r3, r3, #16
+ 506 0080 84F83430 		strb	r3, [r4, #52]
+ 507              	.L27:
+ 364:rt_thread/src/signal.c ****             }
+ 365:rt_thread/src/signal.c ****             else
+ 366:rt_thread/src/signal.c ****             {
+ 367:rt_thread/src/signal.c ****                 return;
+ 368:rt_thread/src/signal.c ****             }
+ 369:rt_thread/src/signal.c ****         }
+ 370:rt_thread/src/signal.c ****     }
+ 371:rt_thread/src/signal.c ****     rt_hw_interrupt_enable(level);
+ 508              		.loc 1 371 0
+ 509 0084 3046     		mov	r0, r6
+ 510 0086 FFF7FEFF 		bl	rt_hw_interrupt_enable
+ 511              	.LVL79:
+ 512              	.L26:
+ 513 008a BDE8F883 		pop	{r3, r4, r5, r6, r7, r8, r9, pc}
+ 514              		.cfi_endproc
+ 515              	.LFE22:
+ 517 008e 00BF     		.section	.text._signal_deliver,"ax",%progbits
+ 518              		.align	2
+ 519              		.thumb
+ 520              		.thumb_func
+ 522              	_signal_deliver:
+ 523              	.LFB17:
+  75:rt_thread/src/signal.c ****     rt_ubase_t level;
+ 524              		.loc 1 75 0
+ 525              		.cfi_startproc
+ 526              		@ args = 0, pretend = 0, frame = 0
+ 527              		@ frame_needed = 0, uses_anonymous_args = 0
+ 528              	.LVL80:
+ 529 0000 38B5     		push	{r3, r4, r5, lr}
+ 530              	.LCFI5:
+ 531              		.cfi_def_cfa_offset 16
+ 532              		.cfi_offset 3, -16
+ 533              		.cfi_offset 4, -12
+ 534              		.cfi_offset 5, -8
+ 535              		.cfi_offset 14, -4
+ 536 0002 0446     		mov	r4, r0
+  78:rt_thread/src/signal.c **** 
+ 537              		.loc 1 78 0
+ 538 0004 FFF7FEFF 		bl	rt_hw_interrupt_disable
+ 539              	.LVL81:
+ 540 0008 0546     		mov	r5, r0
+ 541              	.LVL82:
+ARM GAS  /tmp/ccmkdsNJ.s 			page 17
+
+
+  81:rt_thread/src/signal.c ****     {
+ 542              		.loc 1 81 0
+ 543 000a 626C     		ldr	r2, [r4, #68]
+ 544 000c A36C     		ldr	r3, [r4, #72]
+ 545 000e 1A42     		tst	r2, r3
+ 546 0010 02D1     		bne	.L37
+  83:rt_thread/src/signal.c ****         return;
+ 547              		.loc 1 83 0
+ 548 0012 FFF7FEFF 		bl	rt_hw_interrupt_enable
+ 549              	.LVL83:
+  84:rt_thread/src/signal.c ****     }
+ 550              		.loc 1 84 0
+ 551 0016 38BD     		pop	{r3, r4, r5, pc}
+ 552              	.LVL84:
+ 553              	.L37:
+  87:rt_thread/src/signal.c ****     {
+ 554              		.loc 1 87 0
+ 555 0018 94F83430 		ldrb	r3, [r4, #52]	@ zero_extendqisi2
+ 556 001c 03F00F03 		and	r3, r3, #15
+ 557 0020 022B     		cmp	r3, #2
+ 558 0022 0ED1     		bne	.L39
+  90:rt_thread/src/signal.c ****         /* add signal state */
+ 559              		.loc 1 90 0
+ 560 0024 2046     		mov	r0, r4
+ 561              	.LVL85:
+ 562 0026 FFF7FEFF 		bl	rt_thread_resume
+ 563              	.LVL86:
+  92:rt_thread/src/signal.c **** 
+ 564              		.loc 1 92 0
+ 565 002a 94F83430 		ldrb	r3, [r4, #52]	@ zero_extendqisi2
+ 566 002e 43F05003 		orr	r3, r3, #80
+ 567 0032 84F83430 		strb	r3, [r4, #52]
+  94:rt_thread/src/signal.c **** 
+ 568              		.loc 1 94 0
+ 569 0036 2846     		mov	r0, r5
+ 570 0038 FFF7FEFF 		bl	rt_hw_interrupt_enable
+ 571              	.LVL87:
+  97:rt_thread/src/signal.c ****     }
+ 572              		.loc 1 97 0
+ 573 003c FFF7FEFF 		bl	rt_schedule
+ 574              	.LVL88:
+ 575 0040 38BD     		pop	{r3, r4, r5, pc}
+ 576              	.LVL89:
+ 577              	.L39:
+ 101:rt_thread/src/signal.c ****         {
+ 578              		.loc 1 101 0
+ 579 0042 FFF7FEFF 		bl	rt_thread_self
+ 580              	.LVL90:
+ 581 0046 8442     		cmp	r4, r0
+ 582 0048 0FD1     		bne	.L40
+ 104:rt_thread/src/signal.c **** 
+ 583              		.loc 1 104 0
+ 584 004a 94F83430 		ldrb	r3, [r4, #52]	@ zero_extendqisi2
+ 585 004e 43F01003 		orr	r3, r3, #16
+ 586 0052 84F83430 		strb	r3, [r4, #52]
+ 106:rt_thread/src/signal.c **** 
+ 587              		.loc 1 106 0
+ARM GAS  /tmp/ccmkdsNJ.s 			page 18
+
+
+ 588 0056 2846     		mov	r0, r5
+ 589 0058 FFF7FEFF 		bl	rt_hw_interrupt_enable
+ 590              	.LVL91:
+ 109:rt_thread/src/signal.c ****             {
+ 591              		.loc 1 109 0
+ 592 005c FFF7FEFF 		bl	rt_interrupt_get_nest
+ 593              	.LVL92:
+ 594 0060 00BB     		cbnz	r0, .L36
+ 111:rt_thread/src/signal.c ****             }
+ 595              		.loc 1 111 0
+ 596 0062 0120     		movs	r0, #1
+ 597 0064 FFF7FEFF 		bl	rt_thread_handle_sig
+ 598              	.LVL93:
+ 599 0068 38BD     		pop	{r3, r4, r5, pc}
+ 600              	.LVL94:
+ 601              	.L40:
+ 114:rt_thread/src/signal.c ****         {
+ 602              		.loc 1 114 0
+ 603 006a 94F83430 		ldrb	r3, [r4, #52]	@ zero_extendqisi2
+ 604 006e 13F0100F 		tst	r3, #16
+ 605 0072 14D1     		bne	.L41
+ 117:rt_thread/src/signal.c **** 
+ 606              		.loc 1 117 0
+ 607 0074 43F05003 		orr	r3, r3, #80
+ 120:rt_thread/src/signal.c ****             tid->sig_ret = tid->sp;
+ 608              		.loc 1 120 0
+ 609 0078 23F04003 		bic	r3, r3, #64
+ 610 007c 84F83430 		strb	r3, [r4, #52]
+ 121:rt_thread/src/signal.c ****             tid->sp = rt_hw_stack_init((void *)_signal_entry, RT_NULL,
+ 611              		.loc 1 121 0
+ 612 0080 E269     		ldr	r2, [r4, #28]
+ 613 0082 E264     		str	r2, [r4, #76]
+ 122:rt_thread/src/signal.c ****                                        (void *)((char *)tid->sig_ret - 32), RT_NULL);
+ 614              		.loc 1 122 0
+ 615 0084 0023     		movs	r3, #0
+ 616 0086 203A     		subs	r2, r2, #32
+ 617 0088 1946     		mov	r1, r3
+ 618 008a 0748     		ldr	r0, .L43
+ 619 008c FFF7FEFF 		bl	rt_hw_stack_init
+ 620              	.LVL95:
+ 621 0090 E061     		str	r0, [r4, #28]
+ 125:rt_thread/src/signal.c ****             LOG_D("signal stack pointer @ 0x%08x", tid->sp);
+ 622              		.loc 1 125 0
+ 623 0092 2846     		mov	r0, r5
+ 624 0094 FFF7FEFF 		bl	rt_hw_interrupt_enable
+ 625              	.LVL96:
+ 129:rt_thread/src/signal.c ****         }
+ 626              		.loc 1 129 0
+ 627 0098 FFF7FEFF 		bl	rt_schedule
+ 628              	.LVL97:
+ 629 009c 38BD     		pop	{r3, r4, r5, pc}
+ 630              	.LVL98:
+ 631              	.L41:
+ 133:rt_thread/src/signal.c ****         }
+ 632              		.loc 1 133 0
+ 633 009e 2846     		mov	r0, r5
+ 634 00a0 FFF7FEFF 		bl	rt_hw_interrupt_enable
+ARM GAS  /tmp/ccmkdsNJ.s 			page 19
+
+
+ 635              	.LVL99:
+ 636              	.L36:
+ 637 00a4 38BD     		pop	{r3, r4, r5, pc}
+ 638              	.LVL100:
+ 639              	.L44:
+ 640 00a6 00BF     		.align	2
+ 641              	.L43:
+ 642 00a8 00000000 		.word	_signal_entry
+ 643              		.cfi_endproc
+ 644              	.LFE17:
+ 646              		.section	.text.rt_signal_unmask,"ax",%progbits
+ 647              		.align	2
+ 648              		.global	rt_signal_unmask
+ 649              		.thumb
+ 650              		.thumb_func
+ 652              	rt_signal_unmask:
+ 653              	.LFB20:
+ 178:rt_thread/src/signal.c ****     rt_base_t level;
+ 654              		.loc 1 178 0
+ 655              		.cfi_startproc
+ 656              		@ args = 0, pretend = 0, frame = 0
+ 657              		@ frame_needed = 0, uses_anonymous_args = 0
+ 658              	.LVL101:
+ 659 0000 38B5     		push	{r3, r4, r5, lr}
+ 660              	.LCFI6:
+ 661              		.cfi_def_cfa_offset 16
+ 662              		.cfi_offset 3, -16
+ 663              		.cfi_offset 4, -12
+ 664              		.cfi_offset 5, -8
+ 665              		.cfi_offset 14, -4
+ 666 0002 0546     		mov	r5, r0
+ 180:rt_thread/src/signal.c **** 
+ 667              		.loc 1 180 0
+ 668 0004 FFF7FEFF 		bl	rt_thread_self
+ 669              	.LVL102:
+ 670 0008 0446     		mov	r4, r0
+ 671              	.LVL103:
+ 182:rt_thread/src/signal.c **** 
+ 672              		.loc 1 182 0
+ 673 000a FFF7FEFF 		bl	rt_hw_interrupt_disable
+ 674              	.LVL104:
+ 184:rt_thread/src/signal.c **** 
+ 675              		.loc 1 184 0
+ 676 000e 0123     		movs	r3, #1
+ 677 0010 03FA05F2 		lsl	r2, r3, r5
+ 678 0014 A36C     		ldr	r3, [r4, #72]
+ 679 0016 1343     		orrs	r3, r3, r2
+ 680 0018 A364     		str	r3, [r4, #72]
+ 187:rt_thread/src/signal.c ****     {
+ 681              		.loc 1 187 0
+ 682 001a 626C     		ldr	r2, [r4, #68]
+ 683 001c 1342     		tst	r3, r2
+ 684 001e 05D0     		beq	.L46
+ 189:rt_thread/src/signal.c ****         _signal_deliver(tid);
+ 685              		.loc 1 189 0
+ 686 0020 FFF7FEFF 		bl	rt_hw_interrupt_enable
+ 687              	.LVL105:
+ARM GAS  /tmp/ccmkdsNJ.s 			page 20
+
+
+ 190:rt_thread/src/signal.c ****     }
+ 688              		.loc 1 190 0
+ 689 0024 2046     		mov	r0, r4
+ 690 0026 FFF7FEFF 		bl	_signal_deliver
+ 691              	.LVL106:
+ 692 002a 38BD     		pop	{r3, r4, r5, pc}
+ 693              	.LVL107:
+ 694              	.L46:
+ 194:rt_thread/src/signal.c ****     }
+ 695              		.loc 1 194 0
+ 696 002c FFF7FEFF 		bl	rt_hw_interrupt_enable
+ 697              	.LVL108:
+ 698 0030 38BD     		pop	{r3, r4, r5, pc}
+ 699              		.cfi_endproc
+ 700              	.LFE20:
+ 702 0032 00BF     		.section	.text._signal_entry,"ax",%progbits
+ 703              		.align	2
+ 704              		.thumb
+ 705              		.thumb_func
+ 707              	_signal_entry:
+ 708              	.LFB16:
+  48:rt_thread/src/signal.c ****     rt_thread_t tid = rt_thread_self();
+ 709              		.loc 1 48 0
+ 710              		.cfi_startproc
+ 711              		@ args = 0, pretend = 0, frame = 0
+ 712              		@ frame_needed = 0, uses_anonymous_args = 0
+ 713              	.LVL109:
+ 714 0000 10B5     		push	{r4, lr}
+ 715              	.LCFI7:
+ 716              		.cfi_def_cfa_offset 8
+ 717              		.cfi_offset 4, -8
+ 718              		.cfi_offset 14, -4
+  49:rt_thread/src/signal.c **** 
+ 719              		.loc 1 49 0
+ 720 0002 FFF7FEFF 		bl	rt_thread_self
+ 721              	.LVL110:
+ 722 0006 0446     		mov	r4, r0
+ 723              	.LVL111:
+  52:rt_thread/src/signal.c **** 
+ 724              		.loc 1 52 0
+ 725 0008 0020     		movs	r0, #0
+ 726              	.LVL112:
+ 727 000a FFF7FEFF 		bl	rt_thread_handle_sig
+ 728              	.LVL113:
+  55:rt_thread/src/signal.c ****     tid->sig_ret = RT_NULL;
+ 729              		.loc 1 55 0
+ 730 000e E36C     		ldr	r3, [r4, #76]
+ 731 0010 E361     		str	r3, [r4, #28]
+  56:rt_thread/src/signal.c **** 
+ 732              		.loc 1 56 0
+ 733 0012 0023     		movs	r3, #0
+ 734 0014 E364     		str	r3, [r4, #76]
+  59:rt_thread/src/signal.c **** 
+ 735              		.loc 1 59 0
+ 736 0016 94F83430 		ldrb	r3, [r4, #52]	@ zero_extendqisi2
+ 737 001a 23F01003 		bic	r3, r3, #16
+ 738 001e 84F83430 		strb	r3, [r4, #52]
+ARM GAS  /tmp/ccmkdsNJ.s 			page 21
+
+
+  61:rt_thread/src/signal.c **** }
+ 739              		.loc 1 61 0
+ 740 0022 04F11C00 		add	r0, r4, #28
+ 741 0026 FFF7FEFF 		bl	rt_hw_context_switch_to
+ 742              	.LVL114:
+ 743 002a 10BD     		pop	{r4, pc}
+ 744              		.cfi_endproc
+ 745              	.LFE16:
+ 747              		.section	.text.rt_thread_alloc_sig,"ax",%progbits
+ 748              		.align	2
+ 749              		.global	rt_thread_alloc_sig
+ 750              		.thumb
+ 751              		.thumb_func
+ 753              	rt_thread_alloc_sig:
+ 754              	.LFB23:
+ 372:rt_thread/src/signal.c **** }
+ 373:rt_thread/src/signal.c **** 
+ 374:rt_thread/src/signal.c **** void rt_thread_alloc_sig(rt_thread_t tid)
+ 375:rt_thread/src/signal.c **** {
+ 755              		.loc 1 375 0
+ 756              		.cfi_startproc
+ 757              		@ args = 0, pretend = 0, frame = 0
+ 758              		@ frame_needed = 0, uses_anonymous_args = 0
+ 759              	.LVL115:
+ 760 0000 38B5     		push	{r3, r4, r5, lr}
+ 761              	.LCFI8:
+ 762              		.cfi_def_cfa_offset 16
+ 763              		.cfi_offset 3, -16
+ 764              		.cfi_offset 4, -12
+ 765              		.cfi_offset 5, -8
+ 766              		.cfi_offset 14, -4
+ 767 0002 0546     		mov	r5, r0
+ 376:rt_thread/src/signal.c ****     int index;
+ 377:rt_thread/src/signal.c ****     rt_base_t level;
+ 378:rt_thread/src/signal.c ****     rt_sighandler_t *vectors;
+ 379:rt_thread/src/signal.c **** 
+ 380:rt_thread/src/signal.c ****     vectors = (rt_sighandler_t *)RT_KERNEL_MALLOC(sizeof(rt_sighandler_t) * RT_SIG_MAX);
+ 768              		.loc 1 380 0
+ 769 0004 8020     		movs	r0, #128
+ 770              	.LVL116:
+ 771 0006 FFF7FEFF 		bl	rt_malloc
+ 772              	.LVL117:
+ 381:rt_thread/src/signal.c ****     RT_ASSERT(vectors != RT_NULL);
+ 773              		.loc 1 381 0
+ 774 000a 0446     		mov	r4, r0
+ 775 000c 28B9     		cbnz	r0, .L52
+ 776              		.loc 1 381 0 is_stmt 0 discriminator 1
+ 777 000e 40F27D12 		movw	r2, #381
+ 778 0012 0949     		ldr	r1, .L56
+ 779 0014 0948     		ldr	r0, .L56+4
+ 780              	.LVL118:
+ 781 0016 FFF7FEFF 		bl	rt_assert_handler
+ 782              	.LVL119:
+ 783              	.L52:
+ 375:rt_thread/src/signal.c ****     int index;
+ 784              		.loc 1 375 0 is_stmt 1 discriminator 1
+ 785 001a 0023     		movs	r3, #0
+ARM GAS  /tmp/ccmkdsNJ.s 			page 22
+
+
+ 786 001c 03E0     		b	.L53
+ 787              	.LVL120:
+ 788              	.L54:
+ 382:rt_thread/src/signal.c **** 
+ 383:rt_thread/src/signal.c ****     for (index = 0; index < RT_SIG_MAX; index ++)
+ 384:rt_thread/src/signal.c ****     {
+ 385:rt_thread/src/signal.c ****         vectors[index] = _signal_default_handler;
+ 789              		.loc 1 385 0 discriminator 3
+ 790 001e 084A     		ldr	r2, .L56+8
+ 791 0020 44F82320 		str	r2, [r4, r3, lsl #2]
+ 383:rt_thread/src/signal.c ****     {
+ 792              		.loc 1 383 0 discriminator 3
+ 793 0024 0133     		adds	r3, r3, #1
+ 794              	.LVL121:
+ 795              	.L53:
+ 383:rt_thread/src/signal.c ****     {
+ 796              		.loc 1 383 0 is_stmt 0 discriminator 1
+ 797 0026 1F2B     		cmp	r3, #31
+ 798 0028 F9DD     		ble	.L54
+ 386:rt_thread/src/signal.c ****     }
+ 387:rt_thread/src/signal.c **** 
+ 388:rt_thread/src/signal.c ****     level = rt_hw_interrupt_disable();
+ 799              		.loc 1 388 0 is_stmt 1
+ 800 002a FFF7FEFF 		bl	rt_hw_interrupt_disable
+ 801              	.LVL122:
+ 389:rt_thread/src/signal.c ****     tid->sig_vectors = vectors;
+ 802              		.loc 1 389 0
+ 803 002e 2C65     		str	r4, [r5, #80]
+ 390:rt_thread/src/signal.c ****     rt_hw_interrupt_enable(level);
+ 804              		.loc 1 390 0
+ 805 0030 FFF7FEFF 		bl	rt_hw_interrupt_enable
+ 806              	.LVL123:
+ 807 0034 38BD     		pop	{r3, r4, r5, pc}
+ 808              	.LVL124:
+ 809              	.L57:
+ 810 0036 00BF     		.align	2
+ 811              	.L56:
+ 812 0038 00000000 		.word	.LANCHOR1
+ 813 003c 64000000 		.word	.LC3
+ 814 0040 00000000 		.word	_signal_default_handler
+ 815              		.cfi_endproc
+ 816              	.LFE23:
+ 818              		.section	.text.rt_signal_install,"ax",%progbits
+ 819              		.align	2
+ 820              		.global	rt_signal_install
+ 821              		.thumb
+ 822              		.thumb_func
+ 824              	rt_signal_install:
+ 825              	.LFB18:
+ 139:rt_thread/src/signal.c ****     rt_base_t level;
+ 826              		.loc 1 139 0
+ 827              		.cfi_startproc
+ 828              		@ args = 0, pretend = 0, frame = 0
+ 829              		@ frame_needed = 0, uses_anonymous_args = 0
+ 830              	.LVL125:
+ 831 0000 F8B5     		push	{r3, r4, r5, r6, r7, lr}
+ 832              	.LCFI9:
+ARM GAS  /tmp/ccmkdsNJ.s 			page 23
+
+
+ 833              		.cfi_def_cfa_offset 24
+ 834              		.cfi_offset 3, -24
+ 835              		.cfi_offset 4, -20
+ 836              		.cfi_offset 5, -16
+ 837              		.cfi_offset 6, -12
+ 838              		.cfi_offset 7, -8
+ 839              		.cfi_offset 14, -4
+ 840 0002 0546     		mov	r5, r0
+ 841 0004 0E46     		mov	r6, r1
+ 842              	.LVL126:
+ 142:rt_thread/src/signal.c **** 
+ 843              		.loc 1 142 0
+ 844 0006 FFF7FEFF 		bl	rt_thread_self
+ 845              	.LVL127:
+ 144:rt_thread/src/signal.c **** 
+ 846              		.loc 1 144 0
+ 847 000a 1F2D     		cmp	r5, #31
+ 848 000c 20D8     		bhi	.L64
+ 849 000e 0446     		mov	r4, r0
+ 146:rt_thread/src/signal.c ****     if (tid->sig_vectors == RT_NULL)
+ 850              		.loc 1 146 0
+ 851 0010 FFF7FEFF 		bl	rt_hw_interrupt_disable
+ 852              	.LVL128:
+ 853 0014 0746     		mov	r7, r0
+ 854              	.LVL129:
+ 147:rt_thread/src/signal.c ****     {
+ 855              		.loc 1 147 0
+ 856 0016 236D     		ldr	r3, [r4, #80]
+ 857 0018 13B9     		cbnz	r3, .L60
+ 149:rt_thread/src/signal.c ****     }
+ 858              		.loc 1 149 0
+ 859 001a 2046     		mov	r0, r4
+ 860              	.LVL130:
+ 861 001c FFF7FEFF 		bl	rt_thread_alloc_sig
+ 862              	.LVL131:
+ 863              	.L60:
+ 152:rt_thread/src/signal.c ****     {
+ 864              		.loc 1 152 0
+ 865 0020 236D     		ldr	r3, [r4, #80]
+ 866 0022 7BB1     		cbz	r3, .L65
+ 154:rt_thread/src/signal.c **** 
+ 867              		.loc 1 154 0
+ 868 0024 53F82540 		ldr	r4, [r3, r5, lsl #2]
+ 869              	.LVL132:
+ 156:rt_thread/src/signal.c ****         else if (handler == SIG_DFL) tid->sig_vectors[signo] = _signal_default_handler;
+ 870              		.loc 1 156 0
+ 871 0028 012E     		cmp	r6, #1
+ 872 002a 03D1     		bne	.L62
+ 156:rt_thread/src/signal.c ****         else if (handler == SIG_DFL) tid->sig_vectors[signo] = _signal_default_handler;
+ 873              		.loc 1 156 0 is_stmt 0 discriminator 1
+ 874 002c 0022     		movs	r2, #0
+ 875 002e 43F82520 		str	r2, [r3, r5, lsl #2]
+ 876 0032 08E0     		b	.L61
+ 877              	.L62:
+ 157:rt_thread/src/signal.c ****         else tid->sig_vectors[signo] = handler;
+ 878              		.loc 1 157 0 is_stmt 1
+ 879 0034 1EB9     		cbnz	r6, .L63
+ARM GAS  /tmp/ccmkdsNJ.s 			page 24
+
+
+ 157:rt_thread/src/signal.c ****         else tid->sig_vectors[signo] = handler;
+ 880              		.loc 1 157 0 is_stmt 0 discriminator 1
+ 881 0036 084A     		ldr	r2, .L67
+ 882 0038 43F82520 		str	r2, [r3, r5, lsl #2]
+ 883 003c 03E0     		b	.L61
+ 884              	.L63:
+ 158:rt_thread/src/signal.c ****     }
+ 885              		.loc 1 158 0 is_stmt 1
+ 886 003e 43F82560 		str	r6, [r3, r5, lsl #2]
+ 887 0042 00E0     		b	.L61
+ 888              	.LVL133:
+ 889              	.L65:
+ 141:rt_thread/src/signal.c ****     rt_thread_t tid = rt_thread_self();
+ 890              		.loc 1 141 0
+ 891 0044 0024     		movs	r4, #0
+ 892              	.LVL134:
+ 893              	.L61:
+ 160:rt_thread/src/signal.c **** 
+ 894              		.loc 1 160 0
+ 895 0046 3846     		mov	r0, r7
+ 896 0048 FFF7FEFF 		bl	rt_hw_interrupt_enable
+ 897              	.LVL135:
+ 162:rt_thread/src/signal.c **** }
+ 898              		.loc 1 162 0
+ 899 004c 2046     		mov	r0, r4
+ 900 004e F8BD     		pop	{r3, r4, r5, r6, r7, pc}
+ 901              	.LVL136:
+ 902              	.L64:
+ 144:rt_thread/src/signal.c **** 
+ 903              		.loc 1 144 0
+ 904 0050 4FF0FF30 		mov	r0, #-1
+ 905              	.LVL137:
+ 163:rt_thread/src/signal.c **** 
+ 906              		.loc 1 163 0
+ 907 0054 F8BD     		pop	{r3, r4, r5, r6, r7, pc}
+ 908              	.LVL138:
+ 909              	.L68:
+ 910 0056 00BF     		.align	2
+ 911              	.L67:
+ 912 0058 00000000 		.word	_signal_default_handler
+ 913              		.cfi_endproc
+ 914              	.LFE18:
+ 916              		.section	.text.rt_thread_free_sig,"ax",%progbits
+ 917              		.align	2
+ 918              		.global	rt_thread_free_sig
+ 919              		.thumb
+ 920              		.thumb_func
+ 922              	rt_thread_free_sig:
+ 923              	.LFB24:
+ 391:rt_thread/src/signal.c **** }
+ 392:rt_thread/src/signal.c **** 
+ 393:rt_thread/src/signal.c **** void rt_thread_free_sig(rt_thread_t tid)
+ 394:rt_thread/src/signal.c **** {
+ 924              		.loc 1 394 0
+ 925              		.cfi_startproc
+ 926              		@ args = 0, pretend = 0, frame = 0
+ 927              		@ frame_needed = 0, uses_anonymous_args = 0
+ARM GAS  /tmp/ccmkdsNJ.s 			page 25
+
+
+ 928              	.LVL139:
+ 929 0000 70B5     		push	{r4, r5, r6, lr}
+ 930              	.LCFI10:
+ 931              		.cfi_def_cfa_offset 16
+ 932              		.cfi_offset 4, -16
+ 933              		.cfi_offset 5, -12
+ 934              		.cfi_offset 6, -8
+ 935              		.cfi_offset 14, -4
+ 936 0002 0546     		mov	r5, r0
+ 395:rt_thread/src/signal.c ****     rt_base_t level;
+ 396:rt_thread/src/signal.c ****     struct siginfo_node *si_node;
+ 397:rt_thread/src/signal.c ****     rt_sighandler_t *sig_vectors;
+ 398:rt_thread/src/signal.c **** 
+ 399:rt_thread/src/signal.c ****     level = rt_hw_interrupt_disable();
+ 937              		.loc 1 399 0
+ 938 0004 FFF7FEFF 		bl	rt_hw_interrupt_disable
+ 939              	.LVL140:
+ 400:rt_thread/src/signal.c ****     si_node = (struct siginfo_node *)tid->si_list;
+ 940              		.loc 1 400 0
+ 941 0008 6C6D     		ldr	r4, [r5, #84]
+ 942              	.LVL141:
+ 401:rt_thread/src/signal.c ****     tid->si_list = RT_NULL;
+ 943              		.loc 1 401 0
+ 944 000a 0023     		movs	r3, #0
+ 945 000c 6B65     		str	r3, [r5, #84]
+ 402:rt_thread/src/signal.c **** 
+ 403:rt_thread/src/signal.c ****     sig_vectors = tid->sig_vectors;
+ 946              		.loc 1 403 0
+ 947 000e 2E6D     		ldr	r6, [r5, #80]
+ 948              	.LVL142:
+ 404:rt_thread/src/signal.c ****     tid->sig_vectors = RT_NULL;
+ 949              		.loc 1 404 0
+ 950 0010 2B65     		str	r3, [r5, #80]
+ 405:rt_thread/src/signal.c ****     rt_hw_interrupt_enable(level);
+ 951              		.loc 1 405 0
+ 952 0012 FFF7FEFF 		bl	rt_hw_interrupt_enable
+ 953              	.LVL143:
+ 406:rt_thread/src/signal.c **** 
+ 407:rt_thread/src/signal.c ****     if (si_node)
+ 954              		.loc 1 407 0
+ 955 0016 44B1     		cbz	r4, .L70
+ 956              	.LBB14:
+ 408:rt_thread/src/signal.c ****     {
+ 409:rt_thread/src/signal.c ****         struct rt_slist_node *node;
+ 410:rt_thread/src/signal.c ****         struct rt_slist_node *node_to_free;
+ 411:rt_thread/src/signal.c **** 
+ 412:rt_thread/src/signal.c ****         LOG_D("free signal info list");
+ 413:rt_thread/src/signal.c ****         node = &(si_node->list);
+ 957              		.loc 1 413 0
+ 958 0018 04F10800 		add	r0, r4, #8
+ 959              	.LVL144:
+ 960              	.L71:
+ 414:rt_thread/src/signal.c ****         do
+ 415:rt_thread/src/signal.c ****         {
+ 416:rt_thread/src/signal.c ****             node_to_free = node;
+ 417:rt_thread/src/signal.c ****             node = node->next;
+ 961              		.loc 1 417 0 discriminator 1
+ARM GAS  /tmp/ccmkdsNJ.s 			page 26
+
+
+ 962 001c 50F80849 		ldr	r4, [r0], #-8
+ 963              	.LVL145:
+ 418:rt_thread/src/signal.c ****             si_node = rt_slist_entry(node_to_free, struct siginfo_node, list);
+ 419:rt_thread/src/signal.c ****             rt_mp_free(si_node);
+ 964              		.loc 1 419 0 discriminator 1
+ 965 0020 FFF7FEFF 		bl	rt_mp_free
+ 966              	.LVL146:
+ 417:rt_thread/src/signal.c ****             si_node = rt_slist_entry(node_to_free, struct siginfo_node, list);
+ 967              		.loc 1 417 0 discriminator 1
+ 968 0024 2046     		mov	r0, r4
+ 420:rt_thread/src/signal.c ****         } while (node);
+ 969              		.loc 1 420 0 discriminator 1
+ 970 0026 002C     		cmp	r4, #0
+ 971 0028 F8D1     		bne	.L71
+ 972              	.LVL147:
+ 973              	.L70:
+ 974              	.LBE14:
+ 421:rt_thread/src/signal.c ****     }
+ 422:rt_thread/src/signal.c **** 
+ 423:rt_thread/src/signal.c ****     if (sig_vectors)
+ 975              		.loc 1 423 0
+ 976 002a 16B1     		cbz	r6, .L69
+ 424:rt_thread/src/signal.c ****     {
+ 425:rt_thread/src/signal.c ****         RT_KERNEL_FREE(sig_vectors);
+ 977              		.loc 1 425 0
+ 978 002c 3046     		mov	r0, r6
+ 979 002e FFF7FEFF 		bl	rt_free
+ 980              	.LVL148:
+ 981              	.L69:
+ 982 0032 70BD     		pop	{r4, r5, r6, pc}
+ 983              		.cfi_endproc
+ 984              	.LFE24:
+ 986              		.section	.text.rt_thread_kill,"ax",%progbits
+ 987              		.align	2
+ 988              		.global	rt_thread_kill
+ 989              		.thumb
+ 990              		.thumb_func
+ 992              	rt_thread_kill:
+ 993              	.LFB25:
+ 426:rt_thread/src/signal.c ****     }
+ 427:rt_thread/src/signal.c **** }
+ 428:rt_thread/src/signal.c **** 
+ 429:rt_thread/src/signal.c **** int rt_thread_kill(rt_thread_t tid, int sig)
+ 430:rt_thread/src/signal.c **** {
+ 994              		.loc 1 430 0
+ 995              		.cfi_startproc
+ 996              		@ args = 0, pretend = 0, frame = 8
+ 997              		@ frame_needed = 0, uses_anonymous_args = 0
+ 998              	.LVL149:
+ 999 0000 F0B5     		push	{r4, r5, r6, r7, lr}
+ 1000              	.LCFI11:
+ 1001              		.cfi_def_cfa_offset 20
+ 1002              		.cfi_offset 4, -20
+ 1003              		.cfi_offset 5, -16
+ 1004              		.cfi_offset 6, -12
+ 1005              		.cfi_offset 7, -8
+ 1006              		.cfi_offset 14, -4
+ARM GAS  /tmp/ccmkdsNJ.s 			page 27
+
+
+ 1007 0002 83B0     		sub	sp, sp, #12
+ 1008              	.LCFI12:
+ 1009              		.cfi_def_cfa_offset 32
+ 1010 0004 0E46     		mov	r6, r1
+ 431:rt_thread/src/signal.c ****     siginfo_t si;
+ 432:rt_thread/src/signal.c ****     rt_base_t level;
+ 433:rt_thread/src/signal.c ****     struct siginfo_node *si_node;
+ 434:rt_thread/src/signal.c **** 
+ 435:rt_thread/src/signal.c ****     RT_ASSERT(tid != RT_NULL);
+ 1011              		.loc 1 435 0
+ 1012 0006 0546     		mov	r5, r0
+ 1013 0008 28B9     		cbnz	r0, .L75
+ 1014              		.loc 1 435 0 is_stmt 0 discriminator 1
+ 1015 000a 40F2B312 		movw	r2, #435
+ 1016 000e 3249     		ldr	r1, .L91
+ 1017              	.LVL150:
+ 1018 0010 3248     		ldr	r0, .L91+4
+ 1019              	.LVL151:
+ 1020 0012 FFF7FEFF 		bl	rt_assert_handler
+ 1021              	.LVL152:
+ 1022              	.L75:
+ 436:rt_thread/src/signal.c ****     if (!sig_valid(sig)) return -RT_EINVAL;
+ 1023              		.loc 1 436 0 is_stmt 1
+ 1024 0016 1F2E     		cmp	r6, #31
+ 1025 0018 59D8     		bhi	.L87
+ 437:rt_thread/src/signal.c **** 
+ 438:rt_thread/src/signal.c ****     LOG_I("send signal: %d", sig);
+ 439:rt_thread/src/signal.c ****     si.si_signo = sig;
+ 1026              		.loc 1 439 0
+ 1027 001a ADF80060 		strh	r6, [sp]	@ movhi
+ 440:rt_thread/src/signal.c ****     si.si_code  = SI_USER;
+ 1028              		.loc 1 440 0
+ 1029 001e 0124     		movs	r4, #1
+ 1030 0020 ADF80240 		strh	r4, [sp, #2]	@ movhi
+ 441:rt_thread/src/signal.c ****     si.si_value.sival_ptr = RT_NULL;
+ 1031              		.loc 1 441 0
+ 1032 0024 0023     		movs	r3, #0
+ 1033 0026 0193     		str	r3, [sp, #4]
+ 442:rt_thread/src/signal.c **** 
+ 443:rt_thread/src/signal.c ****     level = rt_hw_interrupt_disable();
+ 1034              		.loc 1 443 0
+ 1035 0028 FFF7FEFF 		bl	rt_hw_interrupt_disable
+ 1036              	.LVL153:
+ 1037 002c 0746     		mov	r7, r0
+ 1038              	.LVL154:
+ 444:rt_thread/src/signal.c ****     if (tid->sig_pending & sig_mask(sig))
+ 1039              		.loc 1 444 0
+ 1040 002e 6B6C     		ldr	r3, [r5, #68]
+ 1041 0030 B440     		lsls	r4, r4, r6
+ 1042 0032 2342     		tst	r3, r4
+ 1043 0034 17D0     		beq	.L77
+ 1044              	.LBB15:
+ 445:rt_thread/src/signal.c ****     {
+ 446:rt_thread/src/signal.c ****         /* whether already emits this signal? */
+ 447:rt_thread/src/signal.c ****         struct rt_slist_node *node;
+ 448:rt_thread/src/signal.c ****         struct siginfo_node  *entry;
+ 449:rt_thread/src/signal.c **** 
+ARM GAS  /tmp/ccmkdsNJ.s 			page 28
+
+
+ 450:rt_thread/src/signal.c ****         si_node = (struct siginfo_node *)tid->si_list;
+ 1045              		.loc 1 450 0
+ 1046 0036 6B6D     		ldr	r3, [r5, #84]
+ 1047              	.LVL155:
+ 451:rt_thread/src/signal.c ****         if (si_node)
+ 1048              		.loc 1 451 0
+ 1049 0038 0BB1     		cbz	r3, .L88
+ 452:rt_thread/src/signal.c ****             node = (struct rt_slist_node *)&si_node->list;
+ 1050              		.loc 1 452 0
+ 1051 003a 0833     		adds	r3, r3, #8
+ 1052              	.LVL156:
+ 1053 003c 11E0     		b	.L79
+ 1054              	.LVL157:
+ 1055              	.L88:
+ 453:rt_thread/src/signal.c ****         else
+ 454:rt_thread/src/signal.c ****             node = RT_NULL;
+ 1056              		.loc 1 454 0
+ 1057 003e 0023     		movs	r3, #0
+ 1058              	.LVL158:
+ 1059 0040 0FE0     		b	.L79
+ 1060              	.LVL159:
+ 1061              	.L81:
+ 455:rt_thread/src/signal.c **** 
+ 456:rt_thread/src/signal.c ****         /* update sig info */
+ 457:rt_thread/src/signal.c ****         for (; (node) != RT_NULL; node = node->next)
+ 458:rt_thread/src/signal.c ****         {
+ 459:rt_thread/src/signal.c ****             entry = rt_slist_entry(node, struct siginfo_node, list);
+ 460:rt_thread/src/signal.c ****             if (entry->si.si_signo == sig)
+ 1062              		.loc 1 460 0
+ 1063 0042 33F8082C 		ldrh	r2, [r3, #-8]
+ 1064 0046 9642     		cmp	r6, r2
+ 1065 0048 0AD1     		bne	.L80
+ 461:rt_thread/src/signal.c ****             {
+ 462:rt_thread/src/signal.c ****                 memcpy(&(entry->si), &si, sizeof(siginfo_t));
+ 1066              		.loc 1 462 0
+ 1067 004a 6A46     		mov	r2, sp
+ 1068 004c 03CA     		ldmia	r2!, {r0, r1}
+ 1069              	.LVL160:
+ 1070 004e 43F8080C 		str	r0, [r3, #-8]	@ unaligned
+ 1071              	.LVL161:
+ 1072 0052 43F8041C 		str	r1, [r3, #-4]	@ unaligned
+ 463:rt_thread/src/signal.c ****                 rt_hw_interrupt_enable(level);
+ 1073              		.loc 1 463 0
+ 1074 0056 3846     		mov	r0, r7
+ 1075 0058 FFF7FEFF 		bl	rt_hw_interrupt_enable
+ 1076              	.LVL162:
+ 464:rt_thread/src/signal.c ****                 return 0;
+ 1077              		.loc 1 464 0
+ 1078 005c 0020     		movs	r0, #0
+ 1079 005e 38E0     		b	.L76
+ 1080              	.LVL163:
+ 1081              	.L80:
+ 457:rt_thread/src/signal.c ****         {
+ 1082              		.loc 1 457 0
+ 1083 0060 1B68     		ldr	r3, [r3]
+ 1084              	.LVL164:
+ 1085              	.L79:
+ARM GAS  /tmp/ccmkdsNJ.s 			page 29
+
+
+ 457:rt_thread/src/signal.c ****         {
+ 1086              		.loc 1 457 0 is_stmt 0 discriminator 1
+ 1087 0062 002B     		cmp	r3, #0
+ 1088 0064 EDD1     		bne	.L81
+ 1089              	.LVL165:
+ 1090              	.L77:
+ 1091              	.LBE15:
+ 465:rt_thread/src/signal.c ****             }
+ 466:rt_thread/src/signal.c ****         }
+ 467:rt_thread/src/signal.c ****     }
+ 468:rt_thread/src/signal.c ****     rt_hw_interrupt_enable(level);
+ 1092              		.loc 1 468 0 is_stmt 1
+ 1093 0066 3846     		mov	r0, r7
+ 1094              	.LVL166:
+ 1095 0068 FFF7FEFF 		bl	rt_hw_interrupt_enable
+ 1096              	.LVL167:
+ 469:rt_thread/src/signal.c **** 
+ 470:rt_thread/src/signal.c ****     si_node = (struct siginfo_node *) rt_mp_alloc(_rt_siginfo_pool, 0);
+ 1097              		.loc 1 470 0
+ 1098 006c 0021     		movs	r1, #0
+ 1099 006e 1C4B     		ldr	r3, .L91+8
+ 1100 0070 1868     		ldr	r0, [r3]
+ 1101 0072 FFF7FEFF 		bl	rt_mp_alloc
+ 1102              	.LVL168:
+ 471:rt_thread/src/signal.c ****     if (si_node)
+ 1103              		.loc 1 471 0
+ 1104 0076 0646     		mov	r6, r0
+ 1105              	.LVL169:
+ 1106 0078 D8B1     		cbz	r0, .L82
+ 1107              	.LVL170:
+ 1108              	.LBB16:
+ 1109              	.LBB17:
+ 1110              		.file 2 "rt_thread/include/rtservice.h"
+   1:rt_thread/include/rtservice.h **** /*
+   2:rt_thread/include/rtservice.h ****  * Copyright (c) 2006-2018, RT-Thread Development Team
+   3:rt_thread/include/rtservice.h ****  *
+   4:rt_thread/include/rtservice.h ****  * SPDX-License-Identifier: Apache-2.0
+   5:rt_thread/include/rtservice.h ****  *
+   6:rt_thread/include/rtservice.h ****  * Change Logs:
+   7:rt_thread/include/rtservice.h ****  * Date           Author       Notes
+   8:rt_thread/include/rtservice.h ****  * 2006-03-16     Bernard      the first version
+   9:rt_thread/include/rtservice.h ****  * 2006-09-07     Bernard      move the kservice APIs to rtthread.h
+  10:rt_thread/include/rtservice.h ****  * 2007-06-27     Bernard      fix the rt_list_remove bug
+  11:rt_thread/include/rtservice.h ****  * 2012-03-22     Bernard      rename kservice.h to rtservice.h
+  12:rt_thread/include/rtservice.h ****  * 2017-11-15     JasonJia     Modify rt_slist_foreach to rt_slist_for_each_entry.
+  13:rt_thread/include/rtservice.h ****  *                             Make code cleanup.
+  14:rt_thread/include/rtservice.h ****  */
+  15:rt_thread/include/rtservice.h **** 
+  16:rt_thread/include/rtservice.h **** #ifndef __RT_SERVICE_H__
+  17:rt_thread/include/rtservice.h **** #define __RT_SERVICE_H__
+  18:rt_thread/include/rtservice.h **** 
+  19:rt_thread/include/rtservice.h **** #ifdef __cplusplus
+  20:rt_thread/include/rtservice.h **** extern "C" {
+  21:rt_thread/include/rtservice.h **** #endif
+  22:rt_thread/include/rtservice.h **** 
+  23:rt_thread/include/rtservice.h **** /**
+  24:rt_thread/include/rtservice.h ****  * @addtogroup KernelService
+ARM GAS  /tmp/ccmkdsNJ.s 			page 30
+
+
+  25:rt_thread/include/rtservice.h ****  */
+  26:rt_thread/include/rtservice.h **** 
+  27:rt_thread/include/rtservice.h **** /**@{*/
+  28:rt_thread/include/rtservice.h **** 
+  29:rt_thread/include/rtservice.h **** /**
+  30:rt_thread/include/rtservice.h ****  * rt_container_of - return the member address of ptr, if the type of ptr is the
+  31:rt_thread/include/rtservice.h ****  * struct type.
+  32:rt_thread/include/rtservice.h ****  */
+  33:rt_thread/include/rtservice.h **** #define rt_container_of(ptr, type, member) \
+  34:rt_thread/include/rtservice.h ****     ((type *)((char *)(ptr) - (unsigned long)(&((type *)0)->member)))
+  35:rt_thread/include/rtservice.h **** 
+  36:rt_thread/include/rtservice.h **** 
+  37:rt_thread/include/rtservice.h **** /**
+  38:rt_thread/include/rtservice.h ****  * @brief initialize a list object
+  39:rt_thread/include/rtservice.h ****  */
+  40:rt_thread/include/rtservice.h **** #define RT_LIST_OBJECT_INIT(object) { &(object), &(object) }
+  41:rt_thread/include/rtservice.h **** 
+  42:rt_thread/include/rtservice.h **** /**
+  43:rt_thread/include/rtservice.h ****  * @brief initialize a list
+  44:rt_thread/include/rtservice.h ****  *
+  45:rt_thread/include/rtservice.h ****  * @param l list to be initialized
+  46:rt_thread/include/rtservice.h ****  */
+  47:rt_thread/include/rtservice.h **** rt_inline void rt_list_init(rt_list_t *l)
+  48:rt_thread/include/rtservice.h **** {
+  49:rt_thread/include/rtservice.h ****     l->next = l->prev = l;
+  50:rt_thread/include/rtservice.h **** }
+  51:rt_thread/include/rtservice.h **** 
+  52:rt_thread/include/rtservice.h **** /**
+  53:rt_thread/include/rtservice.h ****  * @brief insert a node after a list
+  54:rt_thread/include/rtservice.h ****  *
+  55:rt_thread/include/rtservice.h ****  * @param l list to insert it
+  56:rt_thread/include/rtservice.h ****  * @param n new node to be inserted
+  57:rt_thread/include/rtservice.h ****  */
+  58:rt_thread/include/rtservice.h **** rt_inline void rt_list_insert_after(rt_list_t *l, rt_list_t *n)
+  59:rt_thread/include/rtservice.h **** {
+  60:rt_thread/include/rtservice.h ****     l->next->prev = n;
+  61:rt_thread/include/rtservice.h ****     n->next = l->next;
+  62:rt_thread/include/rtservice.h **** 
+  63:rt_thread/include/rtservice.h ****     l->next = n;
+  64:rt_thread/include/rtservice.h ****     n->prev = l;
+  65:rt_thread/include/rtservice.h **** }
+  66:rt_thread/include/rtservice.h **** 
+  67:rt_thread/include/rtservice.h **** /**
+  68:rt_thread/include/rtservice.h ****  * @brief insert a node before a list
+  69:rt_thread/include/rtservice.h ****  *
+  70:rt_thread/include/rtservice.h ****  * @param n new node to be inserted
+  71:rt_thread/include/rtservice.h ****  * @param l list to insert it
+  72:rt_thread/include/rtservice.h ****  */
+  73:rt_thread/include/rtservice.h **** rt_inline void rt_list_insert_before(rt_list_t *l, rt_list_t *n)
+  74:rt_thread/include/rtservice.h **** {
+  75:rt_thread/include/rtservice.h ****     l->prev->next = n;
+  76:rt_thread/include/rtservice.h ****     n->prev = l->prev;
+  77:rt_thread/include/rtservice.h **** 
+  78:rt_thread/include/rtservice.h ****     l->prev = n;
+  79:rt_thread/include/rtservice.h ****     n->next = l;
+  80:rt_thread/include/rtservice.h **** }
+  81:rt_thread/include/rtservice.h **** 
+ARM GAS  /tmp/ccmkdsNJ.s 			page 31
+
+
+  82:rt_thread/include/rtservice.h **** /**
+  83:rt_thread/include/rtservice.h ****  * @brief remove node from list.
+  84:rt_thread/include/rtservice.h ****  * @param n the node to remove from the list.
+  85:rt_thread/include/rtservice.h ****  */
+  86:rt_thread/include/rtservice.h **** rt_inline void rt_list_remove(rt_list_t *n)
+  87:rt_thread/include/rtservice.h **** {
+  88:rt_thread/include/rtservice.h ****     n->next->prev = n->prev;
+  89:rt_thread/include/rtservice.h ****     n->prev->next = n->next;
+  90:rt_thread/include/rtservice.h **** 
+  91:rt_thread/include/rtservice.h ****     n->next = n->prev = n;
+  92:rt_thread/include/rtservice.h **** }
+  93:rt_thread/include/rtservice.h **** 
+  94:rt_thread/include/rtservice.h **** /**
+  95:rt_thread/include/rtservice.h ****  * @brief tests whether a list is empty
+  96:rt_thread/include/rtservice.h ****  * @param l the list to test.
+  97:rt_thread/include/rtservice.h ****  */
+  98:rt_thread/include/rtservice.h **** rt_inline int rt_list_isempty(const rt_list_t *l)
+  99:rt_thread/include/rtservice.h **** {
+ 100:rt_thread/include/rtservice.h ****     return l->next == l;
+ 101:rt_thread/include/rtservice.h **** }
+ 102:rt_thread/include/rtservice.h **** 
+ 103:rt_thread/include/rtservice.h **** /**
+ 104:rt_thread/include/rtservice.h ****  * @brief get the list length
+ 105:rt_thread/include/rtservice.h ****  * @param l the list to get.
+ 106:rt_thread/include/rtservice.h ****  */
+ 107:rt_thread/include/rtservice.h **** rt_inline unsigned int rt_list_len(const rt_list_t *l)
+ 108:rt_thread/include/rtservice.h **** {
+ 109:rt_thread/include/rtservice.h ****     unsigned int len = 0;
+ 110:rt_thread/include/rtservice.h ****     const rt_list_t *p = l;
+ 111:rt_thread/include/rtservice.h ****     while (p->next != l)
+ 112:rt_thread/include/rtservice.h ****     {
+ 113:rt_thread/include/rtservice.h ****         p = p->next;
+ 114:rt_thread/include/rtservice.h ****         len ++;
+ 115:rt_thread/include/rtservice.h ****     }
+ 116:rt_thread/include/rtservice.h **** 
+ 117:rt_thread/include/rtservice.h ****     return len;
+ 118:rt_thread/include/rtservice.h **** }
+ 119:rt_thread/include/rtservice.h **** 
+ 120:rt_thread/include/rtservice.h **** /**
+ 121:rt_thread/include/rtservice.h ****  * @brief get the struct for this entry
+ 122:rt_thread/include/rtservice.h ****  * @param node the entry point
+ 123:rt_thread/include/rtservice.h ****  * @param type the type of structure
+ 124:rt_thread/include/rtservice.h ****  * @param member the name of list in structure
+ 125:rt_thread/include/rtservice.h ****  */
+ 126:rt_thread/include/rtservice.h **** #define rt_list_entry(node, type, member) \
+ 127:rt_thread/include/rtservice.h ****     rt_container_of(node, type, member)
+ 128:rt_thread/include/rtservice.h **** 
+ 129:rt_thread/include/rtservice.h **** /**
+ 130:rt_thread/include/rtservice.h ****  * rt_list_for_each - iterate over a list
+ 131:rt_thread/include/rtservice.h ****  * @pos:	the rt_list_t * to use as a loop cursor.
+ 132:rt_thread/include/rtservice.h ****  * @head:	the head for your list.
+ 133:rt_thread/include/rtservice.h ****  */
+ 134:rt_thread/include/rtservice.h **** #define rt_list_for_each(pos, head) \
+ 135:rt_thread/include/rtservice.h ****     for (pos = (head)->next; pos != (head); pos = pos->next)
+ 136:rt_thread/include/rtservice.h **** 
+ 137:rt_thread/include/rtservice.h **** /**
+ 138:rt_thread/include/rtservice.h ****  * rt_list_for_each_safe - iterate over a list safe against removal of list entry
+ARM GAS  /tmp/ccmkdsNJ.s 			page 32
+
+
+ 139:rt_thread/include/rtservice.h ****  * @pos:	the rt_list_t * to use as a loop cursor.
+ 140:rt_thread/include/rtservice.h ****  * @n:		another rt_list_t * to use as temporary storage
+ 141:rt_thread/include/rtservice.h ****  * @head:	the head for your list.
+ 142:rt_thread/include/rtservice.h ****  */
+ 143:rt_thread/include/rtservice.h **** #define rt_list_for_each_safe(pos, n, head) \
+ 144:rt_thread/include/rtservice.h **** 	for (pos = (head)->next, n = pos->next; pos != (head); \
+ 145:rt_thread/include/rtservice.h **** 		pos = n, n = pos->next)
+ 146:rt_thread/include/rtservice.h **** 
+ 147:rt_thread/include/rtservice.h **** /**
+ 148:rt_thread/include/rtservice.h ****  * rt_list_for_each_entry  -   iterate over list of given type
+ 149:rt_thread/include/rtservice.h ****  * @pos:    the type * to use as a loop cursor.
+ 150:rt_thread/include/rtservice.h ****  * @head:   the head for your list.
+ 151:rt_thread/include/rtservice.h ****  * @member: the name of the list_struct within the struct.
+ 152:rt_thread/include/rtservice.h ****  */
+ 153:rt_thread/include/rtservice.h **** #define rt_list_for_each_entry(pos, head, member) \
+ 154:rt_thread/include/rtservice.h ****     for (pos = rt_list_entry((head)->next, typeof(*pos), member); \
+ 155:rt_thread/include/rtservice.h ****          &pos->member != (head); \
+ 156:rt_thread/include/rtservice.h ****          pos = rt_list_entry(pos->member.next, typeof(*pos), member))
+ 157:rt_thread/include/rtservice.h **** 
+ 158:rt_thread/include/rtservice.h **** /**
+ 159:rt_thread/include/rtservice.h ****  * rt_list_for_each_entry_safe - iterate over list of given type safe against removal of list entry
+ 160:rt_thread/include/rtservice.h ****  * @pos:    the type * to use as a loop cursor.
+ 161:rt_thread/include/rtservice.h ****  * @n:      another type * to use as temporary storage
+ 162:rt_thread/include/rtservice.h ****  * @head:   the head for your list.
+ 163:rt_thread/include/rtservice.h ****  * @member: the name of the list_struct within the struct.
+ 164:rt_thread/include/rtservice.h ****  */
+ 165:rt_thread/include/rtservice.h **** #define rt_list_for_each_entry_safe(pos, n, head, member) \
+ 166:rt_thread/include/rtservice.h ****     for (pos = rt_list_entry((head)->next, typeof(*pos), member), \
+ 167:rt_thread/include/rtservice.h ****          n = rt_list_entry(pos->member.next, typeof(*pos), member); \
+ 168:rt_thread/include/rtservice.h ****          &pos->member != (head); \
+ 169:rt_thread/include/rtservice.h ****          pos = n, n = rt_list_entry(n->member.next, typeof(*n), member))
+ 170:rt_thread/include/rtservice.h **** 
+ 171:rt_thread/include/rtservice.h **** /**
+ 172:rt_thread/include/rtservice.h ****  * rt_list_first_entry - get the first element from a list
+ 173:rt_thread/include/rtservice.h ****  * @ptr:    the list head to take the element from.
+ 174:rt_thread/include/rtservice.h ****  * @type:   the type of the struct this is embedded in.
+ 175:rt_thread/include/rtservice.h ****  * @member: the name of the list_struct within the struct.
+ 176:rt_thread/include/rtservice.h ****  *
+ 177:rt_thread/include/rtservice.h ****  * Note, that list is expected to be not empty.
+ 178:rt_thread/include/rtservice.h ****  */
+ 179:rt_thread/include/rtservice.h **** #define rt_list_first_entry(ptr, type, member) \
+ 180:rt_thread/include/rtservice.h ****     rt_list_entry((ptr)->next, type, member)
+ 181:rt_thread/include/rtservice.h **** 
+ 182:rt_thread/include/rtservice.h **** #define RT_SLIST_OBJECT_INIT(object) { RT_NULL }
+ 183:rt_thread/include/rtservice.h **** 
+ 184:rt_thread/include/rtservice.h **** /**
+ 185:rt_thread/include/rtservice.h ****  * @brief initialize a single list
+ 186:rt_thread/include/rtservice.h ****  *
+ 187:rt_thread/include/rtservice.h ****  * @param l the single list to be initialized
+ 188:rt_thread/include/rtservice.h ****  */
+ 189:rt_thread/include/rtservice.h **** rt_inline void rt_slist_init(rt_slist_t *l)
+ 190:rt_thread/include/rtservice.h **** {
+ 191:rt_thread/include/rtservice.h ****     l->next = RT_NULL;
+ 1111              		.loc 2 191 0
+ 1112 007a 0023     		movs	r3, #0
+ 1113 007c 8360     		str	r3, [r0, #8]
+ 1114              	.LVL171:
+ARM GAS  /tmp/ccmkdsNJ.s 			page 33
+
+
+ 1115              	.LBE17:
+ 1116              	.LBE16:
+ 472:rt_thread/src/signal.c ****     {
+ 473:rt_thread/src/signal.c ****         rt_slist_init(&(si_node->list));
+ 474:rt_thread/src/signal.c ****         memcpy(&(si_node->si), &si, sizeof(siginfo_t));
+ 1117              		.loc 1 474 0
+ 1118 007e 6B46     		mov	r3, sp
+ 1119 0080 03CB     		ldmia	r3!, {r0, r1}
+ 1120              	.LVL172:
+ 1121 0082 3060     		str	r0, [r6]	@ unaligned
+ 1122 0084 7160     		str	r1, [r6, #4]	@ unaligned
+ 475:rt_thread/src/signal.c **** 
+ 476:rt_thread/src/signal.c ****         level = rt_hw_interrupt_disable();
+ 1123              		.loc 1 476 0
+ 1124 0086 FFF7FEFF 		bl	rt_hw_interrupt_disable
+ 1125              	.LVL173:
+ 477:rt_thread/src/signal.c **** 
+ 478:rt_thread/src/signal.c ****         if (tid->si_list)
+ 1126              		.loc 1 478 0
+ 1127 008a 6A6D     		ldr	r2, [r5, #84]
+ 1128 008c 52B1     		cbz	r2, .L83
+ 1129              	.LVL174:
+ 1130              	.LBB18:
+ 479:rt_thread/src/signal.c ****         {
+ 480:rt_thread/src/signal.c ****             struct siginfo_node *si_list;
+ 481:rt_thread/src/signal.c **** 
+ 482:rt_thread/src/signal.c ****             si_list = (struct siginfo_node *)tid->si_list;
+ 483:rt_thread/src/signal.c ****             rt_slist_append(&(si_list->list), &(si_node->list));
+ 1131              		.loc 1 483 0
+ 1132 008e 0832     		adds	r2, r2, #8
+ 1133              	.LVL175:
+ 1134 0090 06F10801 		add	r1, r6, #8
+ 1135              	.LVL176:
+ 1136 0094 00E0     		b	.L84
+ 1137              	.LVL177:
+ 1138              	.L89:
+ 1139              	.LBB19:
+ 1140              	.LBB20:
+ 192:rt_thread/include/rtservice.h **** }
+ 193:rt_thread/include/rtservice.h **** 
+ 194:rt_thread/include/rtservice.h **** rt_inline void rt_slist_append(rt_slist_t *l, rt_slist_t *n)
+ 195:rt_thread/include/rtservice.h **** {
+ 196:rt_thread/include/rtservice.h ****     struct rt_slist_node *node;
+ 197:rt_thread/include/rtservice.h **** 
+ 198:rt_thread/include/rtservice.h ****     node = l;
+ 199:rt_thread/include/rtservice.h ****     while (node->next) node = node->next;
+ 1141              		.loc 2 199 0
+ 1142 0096 1A46     		mov	r2, r3
+ 1143              	.LVL178:
+ 1144              	.L84:
+ 1145 0098 1368     		ldr	r3, [r2]
+ 1146 009a 002B     		cmp	r3, #0
+ 1147 009c FBD1     		bne	.L89
+ 200:rt_thread/include/rtservice.h **** 
+ 201:rt_thread/include/rtservice.h ****     /* append the node to the tail */
+ 202:rt_thread/include/rtservice.h ****     node->next = n;
+ 1148              		.loc 2 202 0
+ARM GAS  /tmp/ccmkdsNJ.s 			page 34
+
+
+ 1149 009e 1160     		str	r1, [r2]
+ 1150              	.LVL179:
+ 203:rt_thread/include/rtservice.h ****     n->next = RT_NULL;
+ 1151              		.loc 2 203 0
+ 1152 00a0 B360     		str	r3, [r6, #8]
+ 1153 00a2 00E0     		b	.L85
+ 1154              	.LVL180:
+ 1155              	.L83:
+ 1156              	.LBE20:
+ 1157              	.LBE19:
+ 1158              	.LBE18:
+ 484:rt_thread/src/signal.c ****         }
+ 485:rt_thread/src/signal.c ****         else
+ 486:rt_thread/src/signal.c ****         {
+ 487:rt_thread/src/signal.c ****             tid->si_list = si_node;
+ 1159              		.loc 1 487 0
+ 1160 00a4 6E65     		str	r6, [r5, #84]
+ 1161              	.L85:
+ 488:rt_thread/src/signal.c ****         }
+ 489:rt_thread/src/signal.c **** 
+ 490:rt_thread/src/signal.c ****         /* a new signal */
+ 491:rt_thread/src/signal.c ****         tid->sig_pending |= sig_mask(sig);
+ 1162              		.loc 1 491 0
+ 1163 00a6 6B6C     		ldr	r3, [r5, #68]
+ 1164 00a8 1C43     		orrs	r4, r4, r3
+ 1165 00aa 6C64     		str	r4, [r5, #68]
+ 492:rt_thread/src/signal.c **** 
+ 493:rt_thread/src/signal.c ****         rt_hw_interrupt_enable(level);
+ 1166              		.loc 1 493 0
+ 1167 00ac FFF7FEFF 		bl	rt_hw_interrupt_enable
+ 1168              	.LVL181:
+ 1169 00b0 08E0     		b	.L86
+ 1170              	.LVL182:
+ 1171              	.L82:
+ 494:rt_thread/src/signal.c ****     }
+ 495:rt_thread/src/signal.c ****     else
+ 496:rt_thread/src/signal.c ****     {
+ 497:rt_thread/src/signal.c ****         LOG_E("The allocation of signal info node failed.");
+ 1172              		.loc 1 497 0
+ 1173 00b2 0C48     		ldr	r0, .L91+12
+ 1174              	.LVL183:
+ 1175 00b4 FFF7FEFF 		bl	rt_kprintf
+ 1176              	.LVL184:
+ 1177 00b8 0B48     		ldr	r0, .L91+16
+ 1178 00ba FFF7FEFF 		bl	rt_kprintf
+ 1179              	.LVL185:
+ 1180 00be 0B48     		ldr	r0, .L91+20
+ 1181 00c0 FFF7FEFF 		bl	rt_kprintf
+ 1182              	.LVL186:
+ 1183              	.L86:
+ 498:rt_thread/src/signal.c ****     }
+ 499:rt_thread/src/signal.c **** 
+ 500:rt_thread/src/signal.c ****     /* deliver signal to this thread */
+ 501:rt_thread/src/signal.c ****     _signal_deliver(tid);
+ 1184              		.loc 1 501 0
+ 1185 00c4 2846     		mov	r0, r5
+ 1186 00c6 FFF7FEFF 		bl	_signal_deliver
+ARM GAS  /tmp/ccmkdsNJ.s 			page 35
+
+
+ 1187              	.LVL187:
+ 502:rt_thread/src/signal.c **** 
+ 503:rt_thread/src/signal.c ****     return RT_EOK;
+ 1188              		.loc 1 503 0
+ 1189 00ca 0020     		movs	r0, #0
+ 1190 00cc 01E0     		b	.L76
+ 1191              	.LVL188:
+ 1192              	.L87:
+ 436:rt_thread/src/signal.c **** 
+ 1193              		.loc 1 436 0
+ 1194 00ce 6FF00900 		mvn	r0, #9
+ 1195              	.LVL189:
+ 1196              	.L76:
+ 504:rt_thread/src/signal.c **** }
+ 1197              		.loc 1 504 0
+ 1198 00d2 03B0     		add	sp, sp, #12
+ 1199              	.LCFI13:
+ 1200              		.cfi_def_cfa_offset 20
+ 1201              		@ sp needed
+ 1202 00d4 F0BD     		pop	{r4, r5, r6, r7, pc}
+ 1203              	.LVL190:
+ 1204              	.L92:
+ 1205 00d6 00BF     		.align	2
+ 1206              	.L91:
+ 1207 00d8 00000000 		.word	.LANCHOR2
+ 1208 00dc 78000000 		.word	.LC4
+ 1209 00e0 00000000 		.word	.LANCHOR3
+ 1210 00e4 88000000 		.word	.LC5
+ 1211 00e8 94000000 		.word	.LC6
+ 1212 00ec C0000000 		.word	.LC7
+ 1213              		.cfi_endproc
+ 1214              	.LFE25:
+ 1216              		.section	.text.rt_system_signal_init,"ax",%progbits
+ 1217              		.align	2
+ 1218              		.global	rt_system_signal_init
+ 1219              		.thumb
+ 1220              		.thumb_func
+ 1222              	rt_system_signal_init:
+ 1223              	.LFB26:
+ 505:rt_thread/src/signal.c **** 
+ 506:rt_thread/src/signal.c **** int rt_system_signal_init(void)
+ 507:rt_thread/src/signal.c **** {
+ 1224              		.loc 1 507 0
+ 1225              		.cfi_startproc
+ 1226              		@ args = 0, pretend = 0, frame = 0
+ 1227              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1228 0000 08B5     		push	{r3, lr}
+ 1229              	.LCFI14:
+ 1230              		.cfi_def_cfa_offset 8
+ 1231              		.cfi_offset 3, -8
+ 1232              		.cfi_offset 14, -4
+ 508:rt_thread/src/signal.c ****     _rt_siginfo_pool = rt_mp_create("signal", RT_SIG_INFO_MAX, sizeof(struct siginfo_node));
+ 1233              		.loc 1 508 0
+ 1234 0002 0C22     		movs	r2, #12
+ 1235 0004 2021     		movs	r1, #32
+ 1236 0006 0B48     		ldr	r0, .L96
+ 1237 0008 FFF7FEFF 		bl	rt_mp_create
+ARM GAS  /tmp/ccmkdsNJ.s 			page 36
+
+
+ 1238              	.LVL191:
+ 1239 000c 0A4B     		ldr	r3, .L96+4
+ 1240 000e 1860     		str	r0, [r3]
+ 509:rt_thread/src/signal.c ****     if (_rt_siginfo_pool == RT_NULL)
+ 1241              		.loc 1 509 0
+ 1242 0010 70B9     		cbnz	r0, .L94
+ 510:rt_thread/src/signal.c ****     {
+ 511:rt_thread/src/signal.c ****         LOG_E("create memory pool for signal info failed.");
+ 1243              		.loc 1 511 0
+ 1244 0012 0A48     		ldr	r0, .L96+8
+ 1245 0014 FFF7FEFF 		bl	rt_kprintf
+ 1246              	.LVL192:
+ 1247 0018 0948     		ldr	r0, .L96+12
+ 1248 001a FFF7FEFF 		bl	rt_kprintf
+ 1249              	.LVL193:
+ 1250 001e 0948     		ldr	r0, .L96+16
+ 1251 0020 FFF7FEFF 		bl	rt_kprintf
+ 1252              	.LVL194:
+ 512:rt_thread/src/signal.c ****         RT_ASSERT(0);
+ 1253              		.loc 1 512 0
+ 1254 0024 4FF40072 		mov	r2, #512
+ 1255 0028 0749     		ldr	r1, .L96+20
+ 1256 002a 0848     		ldr	r0, .L96+24
+ 1257 002c FFF7FEFF 		bl	rt_assert_handler
+ 1258              	.LVL195:
+ 1259              	.L94:
+ 513:rt_thread/src/signal.c ****     }
+ 514:rt_thread/src/signal.c **** 
+ 515:rt_thread/src/signal.c ****     return 0;
+ 516:rt_thread/src/signal.c **** }
+ 1260              		.loc 1 516 0
+ 1261 0030 0020     		movs	r0, #0
+ 1262 0032 08BD     		pop	{r3, pc}
+ 1263              	.L97:
+ 1264              		.align	2
+ 1265              	.L96:
+ 1266 0034 C4000000 		.word	.LC8
+ 1267 0038 00000000 		.word	.LANCHOR3
+ 1268 003c 88000000 		.word	.LC5
+ 1269 0040 CC000000 		.word	.LC9
+ 1270 0044 C0000000 		.word	.LC7
+ 1271 0048 00000000 		.word	.LANCHOR4
+ 1272 004c 38000000 		.word	.LC1
+ 1273              		.cfi_endproc
+ 1274              	.LFE26:
+ 1276              		.section	.rodata.__FUNCTION__.5462,"a",%progbits
+ 1277              		.align	2
+ 1278              		.set	.LANCHOR1,. + 0
+ 1281              	__FUNCTION__.5462:
+ 1282 0000 72745F74 		.ascii	"rt_thread_alloc_sig\000"
+ 1282      68726561 
+ 1282      645F616C 
+ 1282      6C6F635F 
+ 1282      73696700 
+ 1283              		.section	.rodata.__FUNCTION__.5483,"a",%progbits
+ 1284              		.align	2
+ 1285              		.set	.LANCHOR2,. + 0
+ARM GAS  /tmp/ccmkdsNJ.s 			page 37
+
+
+ 1288              	__FUNCTION__.5483:
+ 1289 0000 72745F74 		.ascii	"rt_thread_kill\000"
+ 1289      68726561 
+ 1289      645F6B69 
+ 1289      6C6C00
+ 1290              		.section	.rodata.__FUNCTION__.5493,"a",%progbits
+ 1291              		.align	2
+ 1292              		.set	.LANCHOR4,. + 0
+ 1295              	__FUNCTION__.5493:
+ 1296 0000 72745F73 		.ascii	"rt_system_signal_init\000"
+ 1296      79737465 
+ 1296      6D5F7369 
+ 1296      676E616C 
+ 1296      5F696E69 
+ 1297              		.section	.rodata.str1.4,"aMS",%progbits,1
+ 1298              		.align	2
+ 1299              	.LC0:
+ 1300 0000 46756E63 		.ascii	"Function[%s] shall not be used before scheduler sta"
+ 1300      74696F6E 
+ 1300      5B25735D 
+ 1300      20736861 
+ 1300      6C6C206E 
+ 1301 0033 72740A00 		.ascii	"rt\012\000"
+ 1302 0037 00       		.space	1
+ 1303              	.LC1:
+ 1304 0038 3000     		.ascii	"0\000"
+ 1305 003a 0000     		.space	2
+ 1306              	.LC2:
+ 1307 003c 46756E63 		.ascii	"Function[%s] shall not be used in ISR\012\000"
+ 1307      74696F6E 
+ 1307      5B25735D 
+ 1307      20736861 
+ 1307      6C6C206E 
+ 1308 0063 00       		.space	1
+ 1309              	.LC3:
+ 1310 0064 76656374 		.ascii	"vectors != RT_NULL\000"
+ 1310      6F727320 
+ 1310      213D2052 
+ 1310      545F4E55 
+ 1310      4C4C00
+ 1311 0077 00       		.space	1
+ 1312              	.LC4:
+ 1313 0078 74696420 		.ascii	"tid != RT_NULL\000"
+ 1313      213D2052 
+ 1313      545F4E55 
+ 1313      4C4C00
+ 1314 0087 00       		.space	1
+ 1315              	.LC5:
+ 1316 0088 5B452F53 		.ascii	"[E/SIGN] \000"
+ 1316      49474E5D 
+ 1316      2000
+ 1317 0092 0000     		.space	2
+ 1318              	.LC6:
+ 1319 0094 54686520 		.ascii	"The allocation of signal info node failed.\000"
+ 1319      616C6C6F 
+ 1319      63617469 
+ 1319      6F6E206F 
+ARM GAS  /tmp/ccmkdsNJ.s 			page 38
+
+
+ 1319      66207369 
+ 1320 00bf 00       		.space	1
+ 1321              	.LC7:
+ 1322 00c0 0A00     		.ascii	"\012\000"
+ 1323 00c2 0000     		.space	2
+ 1324              	.LC8:
+ 1325 00c4 7369676E 		.ascii	"signal\000"
+ 1325      616C00
+ 1326 00cb 00       		.space	1
+ 1327              	.LC9:
+ 1328 00cc 63726561 		.ascii	"create memory pool for signal info failed.\000"
+ 1328      7465206D 
+ 1328      656D6F72 
+ 1328      7920706F 
+ 1328      6F6C2066 
+ 1329              		.section	.rodata.__FUNCTION__.5434,"a",%progbits
+ 1330              		.align	2
+ 1331              		.set	.LANCHOR0,. + 0
+ 1334              	__FUNCTION__.5434:
+ 1335 0000 72745F73 		.ascii	"rt_signal_wait\000"
+ 1335      69676E61 
+ 1335      6C5F7761 
+ 1335      697400
+ 1336              		.section	.bss._rt_siginfo_pool,"aw",%nobits
+ 1337              		.align	2
+ 1338              		.set	.LANCHOR3,. + 0
+ 1341              	_rt_siginfo_pool:
+ 1342 0000 00000000 		.space	4
+ 1343              		.text
+ 1344              	.Letext0:
+ 1345              		.file 3 "rt_thread/include/rtdef.h"
+ 1346              		.file 4 "rt_thread/include/libc/libc_signal.h"
+ 1347              		.file 5 "rt_thread/include/rtthread.h"
+ 1348              		.file 6 "rt_thread/include/rthw.h"
+ARM GAS  /tmp/ccmkdsNJ.s 			page 39
+
+
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 signal.c
+     /tmp/ccmkdsNJ.s:20     .text._signal_default_handler:0000000000000000 $t
+     /tmp/ccmkdsNJ.s:24     .text._signal_default_handler:0000000000000000 _signal_default_handler
+     /tmp/ccmkdsNJ.s:38     .text.rt_signal_mask:0000000000000000 $t
+     /tmp/ccmkdsNJ.s:43     .text.rt_signal_mask:0000000000000000 rt_signal_mask
+     /tmp/ccmkdsNJ.s:81     .text.rt_signal_wait:0000000000000000 $t
+     /tmp/ccmkdsNJ.s:86     .text.rt_signal_wait:0000000000000000 rt_signal_wait
+     /tmp/ccmkdsNJ.s:384    .text.rt_signal_wait:0000000000000170 $d
+     /tmp/ccmkdsNJ.s:392    .text.rt_thread_handle_sig:0000000000000000 $t
+     /tmp/ccmkdsNJ.s:397    .text.rt_thread_handle_sig:0000000000000000 rt_thread_handle_sig
+     /tmp/ccmkdsNJ.s:518    .text._signal_deliver:0000000000000000 $t
+     /tmp/ccmkdsNJ.s:522    .text._signal_deliver:0000000000000000 _signal_deliver
+     /tmp/ccmkdsNJ.s:642    .text._signal_deliver:00000000000000a8 $d
+     /tmp/ccmkdsNJ.s:707    .text._signal_entry:0000000000000000 _signal_entry
+     /tmp/ccmkdsNJ.s:647    .text.rt_signal_unmask:0000000000000000 $t
+     /tmp/ccmkdsNJ.s:652    .text.rt_signal_unmask:0000000000000000 rt_signal_unmask
+     /tmp/ccmkdsNJ.s:703    .text._signal_entry:0000000000000000 $t
+     /tmp/ccmkdsNJ.s:748    .text.rt_thread_alloc_sig:0000000000000000 $t
+     /tmp/ccmkdsNJ.s:753    .text.rt_thread_alloc_sig:0000000000000000 rt_thread_alloc_sig
+     /tmp/ccmkdsNJ.s:812    .text.rt_thread_alloc_sig:0000000000000038 $d
+     /tmp/ccmkdsNJ.s:819    .text.rt_signal_install:0000000000000000 $t
+     /tmp/ccmkdsNJ.s:824    .text.rt_signal_install:0000000000000000 rt_signal_install
+     /tmp/ccmkdsNJ.s:912    .text.rt_signal_install:0000000000000058 $d
+     /tmp/ccmkdsNJ.s:917    .text.rt_thread_free_sig:0000000000000000 $t
+     /tmp/ccmkdsNJ.s:922    .text.rt_thread_free_sig:0000000000000000 rt_thread_free_sig
+     /tmp/ccmkdsNJ.s:987    .text.rt_thread_kill:0000000000000000 $t
+     /tmp/ccmkdsNJ.s:992    .text.rt_thread_kill:0000000000000000 rt_thread_kill
+     /tmp/ccmkdsNJ.s:1207   .text.rt_thread_kill:00000000000000d8 $d
+     /tmp/ccmkdsNJ.s:1217   .text.rt_system_signal_init:0000000000000000 $t
+     /tmp/ccmkdsNJ.s:1222   .text.rt_system_signal_init:0000000000000000 rt_system_signal_init
+     /tmp/ccmkdsNJ.s:1266   .text.rt_system_signal_init:0000000000000034 $d
+     /tmp/ccmkdsNJ.s:1277   .rodata.__FUNCTION__.5462:0000000000000000 $d
+     /tmp/ccmkdsNJ.s:1281   .rodata.__FUNCTION__.5462:0000000000000000 __FUNCTION__.5462
+     /tmp/ccmkdsNJ.s:1284   .rodata.__FUNCTION__.5483:0000000000000000 $d
+     /tmp/ccmkdsNJ.s:1288   .rodata.__FUNCTION__.5483:0000000000000000 __FUNCTION__.5483
+     /tmp/ccmkdsNJ.s:1291   .rodata.__FUNCTION__.5493:0000000000000000 $d
+     /tmp/ccmkdsNJ.s:1295   .rodata.__FUNCTION__.5493:0000000000000000 __FUNCTION__.5493
+     /tmp/ccmkdsNJ.s:1298   .rodata.str1.4:0000000000000000 $d
+     /tmp/ccmkdsNJ.s:1330   .rodata.__FUNCTION__.5434:0000000000000000 $d
+     /tmp/ccmkdsNJ.s:1334   .rodata.__FUNCTION__.5434:0000000000000000 __FUNCTION__.5434
+     /tmp/ccmkdsNJ.s:1337   .bss._rt_siginfo_pool:0000000000000000 $d
+     /tmp/ccmkdsNJ.s:1341   .bss._rt_siginfo_pool:0000000000000000 _rt_siginfo_pool
+                     .debug_frame:0000000000000010 $d
+
+UNDEFINED SYMBOLS
+rt_thread_self
+rt_hw_interrupt_disable
+rt_hw_interrupt_enable
+rt_kprintf
+rt_assert_handler
+rt_interrupt_get_nest
+rt_thread_suspend
+rt_timer_control
+rt_timer_start
+rt_schedule
+rt_mp_free
+ARM GAS  /tmp/ccmkdsNJ.s 			page 40
+
+
+rt_thread_resume
+rt_hw_stack_init
+rt_hw_context_switch_to
+rt_malloc
+rt_free
+rt_mp_alloc
+rt_mp_create
